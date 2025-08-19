@@ -1,0 +1,1938 @@
+---
+title: "A one-way ANOVA tutorial"
+format:
+  arxiv-pdf:
+    keep-tex: false 
+    linenumbers: false
+    doublespacing: false    
+    runninghead: "A one-way ANOVA tutorial"
+    include-in-header: A-one-way-ANOVA-tutorial-header.tex
+  arxiv-html: default
+author:
+  - name: Dirk Ostwald
+    affiliations:
+      - name: Otto-von-Guericke-Universität Magdeburg
+        department: Institute of Psychology
+        address: Universitätsplatz 2
+        # city: Magdeburg
+        # country: Germany
+        # postal-code: 39106
+    # orcid: 0000-0002-3530-1845
+    # email: dirk.ostwald@ovgu.de
+bibliography: A-one-way-ANOVA-tutorial.bib  
+---
+
+# Introduction {#sec-intro}
+
+Analysis of variance (ANOVA) is an umbrella term for a large variety of interwoven 
+experimental designs and data-analytical methods that aim to quantify the effects
+of interventions. As the name implies, ANOVA in its traditional sense is concerned 
+with analyzing data variability, seeking to partition it into variation attributable 
+to experimental manipulations and variation arising from unsystematic, non-interventional 
+sources. ANOVA was popularized a century ago by Ronald A. Fisher as an 
+inference method to assess the evidence for an effect of experimental intervention when 
+comparing a number of treatment groups (@fisher1925a). Since then, experimental designs have 
+diversified tremendously and along with them the data-analytical approaches under
+the ANOVA label. The form of ANOVA we are concerned with in the current tutorial
+is typically referred to as *one-way ANOVA* and applies in the context of a single
+experimental factor, such as different and unrelated treatment groups. In the following, 
+we use the term ANOVA to exclusively refer to the one-way ANOVA scenario. In 
+@sec-anova-as-a-computational-procedure, we discuss the traditional 
+computation-oriented approach to ANOVA. 
+
+Over the course of the 20th century, ANOVA has become regarded as a special 
+linear model that describes how data in an ANOVA experimental design is generated. 
+This perspective enables experimental effects to be expressed through model parameters 
+while also providing a framework for quantifying the uncertainty associated with 
+the resulting parameter inferences. While a comprehensive introduction of this 
+(general) linear model approach to statistical inference is beyond the scope of this tutorial, we
+discuss some of its aspects in @sec-anova-as-a-linear-model.
+
+Finally, over the course of the last forty years, the digital revolution has allowed
+the development of computerized algorithms that evaluate parameter estimates numerically
+within seconds. This in turn has allowed the development of ANOVA models that are
+more flexibly adapted to specific experimental contexts and can directly capture
+structural context information of no interest to the evaluation of experimental effects.
+Broadly speaking, these methods come under the label of *linear mixed models* 
+and dominate the applied use of ANOVA approaches in today's research. In 
+@sec-anova-as-a-linear-mixed-model we aim to provide some intuition about these 
+approaches in the context of randomized block and nested subsampling designs. 
+
+Throughout, we assume familiarity with the sum symbol (for a brief refresher, 
+see @sec-the-sum-symbol). We eschew introducing the matrix formulation of 
+linear models, which in fact provides the formal language in which such models 
+are most precisely expressed. For the essential probabilistic concepts, we mainly appeal
+to intuition. However, please note that a proper understanding of modern ANOVA
+can only be achieved based on firm foundations in linear algebra and probability theory.
+
+## An example scenario {#sec-an-example-scenario}
+
+As a first concrete data analysis scenario, we consider the effect of four different 
+*treatments* that are assessed based on 10 *observational units* each. The 
+observational units that are exposed to one of the treatments will also be referred to 
+as a *(treatment) group*. For the example, we assume $p = 4$ treatment groups of 
+$m = 10$ observational units per group and thus $n = p\cdot m = 4 \cdot 10 = 40$ 
+observational units with associated univariate measurements in total. In the 
+language of (factorial) experimental designs the treatments form what is called 
+an *experimental factor* and the different variations that the treatment 
+can take are referred to as *levels* of the group factor. We label the treatments 
+generically as `T1`, `T2`, `T3`, `T4`. 
+
+For a biological example, the observational units could be fibroblasts from a 
+given cell culture strain, say `S1` and the measurements could be the amount of 
+collagen fiber produced by each fibroblast within 24 hours measured by some 
+optical method. The treatments could correspond to different cytokines that may 
+or may not increase the production  of collagen fiber production. @tbl-anova-data-set-1 
+shows a set of exemplary measurements. 
+
+
+```{r, echo = F, eval = F}
+library(MASS)                                                                   # multivariate normal distribution
+set.seed(2)                                                                     # reproducibility 
+m       = 10                                                                    # number of observational units per group
+p       = 4                                                                     # number of groups 
+n       = p*m                                                                   # number of observation units 
+Xt      = cbind(                                                                # design matrix
+          matrix(1,nrow = n, ncol = 1),                                         # design matrix
+          kronecker(diag(p), matrix(1,nrow = m,ncol = 1)))                      # design matrix
+X      = Xt[,-2]                                                                # design matrix
+I_n    = diag(n)                                                                # n x n identity matrix
+beta   = list(matrix(c(5,5,0,-2), nrow = p), matrix(c(5,0,0,0), nrow = p))      # \beta = (\mu_0,\alpha_2,\alpha_3,\alpha_4)
+sigsqr = 3                                                                      # \sigma^2   
+for(i in 1:2){                                                                  # data set iterations
+  y    = mvrnorm(1, X %*% beta[[i]], sigsqr*I_n)                                # 1 realization of an n-dimensional random vectors
+  y    = round(y, digits = 1)                                                   # one decimal place 
+  D    = data.frame(Treatment = rep(paste0("T", 1:4), each = m), Collagen = y)  # dataframe                   
+  write.csv(D,  paste0("./_data/anova-data-set-",i,".csv"), row.names = FALSE)} # save 
+```
+```{r echo = F, message = F}
+#| label: tbl-anova-data-set-1
+#| tbl-cap : "Example data set 1"
+fname   = "./_data/anova-data-set-1.csv"                                        # filename
+D       = read.table(file.path(fname), sep = ",", header = TRUE)                # data loading
+D       = data.frame(split(D$Collagen, D$Treatment))                            # wide format
+knitr::kable(D, digits = 2, align = "r")                                        # visualization
+```
+
+The data set of @tbl-anova-data-set-1 is summarized in terms of its treatment 
+group means and treatment group standard deviations and visualized in @fig-anova-data-set-1 
+using the **R** code below. Note that all individual data points are shown on 
+the figure. The visualization uses the Base R Graphics functionality and does not
+require additional packages for full control of all figure properties. The different
+functions can be studied using `?functioname` in **R** or with the help of one's 
+favorite general purpose large language model, such as ChatGPT.
+
+\tiny
+```{r, echo = T, eval = F}
+# data loading and group mean and standard deviation evaluation
+D       = read.csv("./_data/anova-data-set-1.csv")                              # dataframe in long format                                                
+D       = data.frame(split(D$Collagen, D$Treatment))                            # wide format organization                                                            
+gmeans  = colMeans(D)                                                           # group means                                                    
+gstds   = apply(D,2,sd)                                                         # group standard deviations  
+
+# figure formatting
+pdf(                                                                            # figure file format
+file      = "./_figures/anova-data-set-1.pdf",                                  # figure file path and name
+width     = 7,                                                                  # figure width in inches
+height    = 5)                                                                  # figure height in inches
+par(                                                                            # figure parameter  
+mfcol     = c(1,1),                                                             # 1 x 1 subplot layout
+family    = "sans",                                                             # fontfamily (sans serif)
+pty       = "m",                                                                # plot area (maximal not square)    
+bty       = "l",                                                                # axes in L form        
+mgp       = c(2,1,0),                                                           # margin spacing  
+font.main = 1,                                                                  # title font
+lwd       = 1,                                                                  # linewidth    
+las       = 1)                                                                  # orientiation of x-ticks
+
+# bars
+x         = barplot(                                                            # barplot and barlocations
+gmeans,                                                                         # group mean bars
+ylim      = c(0,16),                                                            # y-axis limits
+col       = "gray90",                                                           # bar color
+ylab      = "Collagen",                                                         # y-axis label
+xlab      = "Treatment",                                                        # x-axis label  
+main      = "Data Set 1")                                                       # title
+
+# standard deviation error bars
+arrows(                                                                         # errorbars                               
+x0        = x,                                                                  # x-ordinate
+y0        = gmeans - gstds,                                                     # y-ordinate, lower end
+x1        = x,                                                                  # x-ordinate  
+y1        = gmeans + gstds,                                                     # y-ordinate upper end
+code      = 3,                                                                  # caps on both ends
+angle     = 90,                                                                 # cap                          
+length    = 0.05)                                                               # cap length 
+ 
+# data points
+for(i in 1:ncol(D)){                                                            # data point iterations
+points(                                                                         # point plot
+jitter(rep(x[i], length(D[,i])), amount = .3),                                  # left/right jitter for overlap avoidance
+D[,i],                                                                          # data points of interest
+pch     = 21,                                                                   # point type
+col     = "White",                                                              # outline color  
+bg      = "Black")}                                                             # fill color  
+dev.off()                                                                       # pdf closing  
+```
+\normalsize
+
+![Barplot visualization of data set 1. Each dot represents the collagen production
+of a single fibroblast undergoing one of the treatment levels](./_figures/anova-data-set-1.pdf){#fig-anova-data-set-1 fig-align="center" width=70%}
+
+As is evident from @fig-anova-data-set-1, Treatment 1 (`T1`) and Treatment 3 (`T3`) induce
+similar average collagen production per fibroblast. Treatment 2 (`T2`) induces a 
+marked increase collagen production and Treatment 4 (`T4`) induces less collagen 
+production.
+
+For comparison purposes, we also consider a second example data set generated 
+using fibroblasts from a second cell culture strain `S2` but otherwise identical
+to the first example data set. We tabulate this data set in @tbl-anova-data-set-2 and 
+visualize it in @fig-anova-data-set-2. Obviously, in this data set, the treatment levels
+do not induce differences in the average collagen production per fibroblast.
+
+```{r echo = F, message = F}
+#| label: tbl-anova-data-set-2
+#| tbl-cap : "Example data set 2"
+fname   = "./_data/anova-data-set-2.csv"                                        # filename
+D       = read.csv("./_data/anova-data-set-1.csv")                              # dataframe in long format                                                
+D       = data.frame(split(D$Collagen, D$Treatment))                            # wide format organization  
+knitr::kable(D, digits = 2, align = "r")                                        # visualization
+```
+![Barplot visualization of data set 2. Each dot represents the collagen production
+of a single fibroblast undergoing one of the treatment levels](./_figures/anova-data-set-2.pdf){#fig-anova-data-set-2 fig-align="center" width=70%}
+
+# ANOVA as a computational procedure {#sec-anova-as-a-computational-procedure}
+
+**Empirical variance.** A simple measure of the variability of $n$ scalar data points 
+$x_1,...,x_n$ is their *empirical variance*
+$$
+s^2 = \frac{1}{n-1}\sum_{i=1}^n \left(x_i - \bar{x}\right)^2,
+$$ {#eq-empirical-variance}
+where $\bar{x} := \frac{1}{n}\sum_{i=1}^n x_i$ denotes the *mean* of the data points. 
+Conceptually, $s^2$ in @eq-empirical-variance is computed by first computing
+the mean $\bar{x}$ of all data points as a measure of their central tendency. 
+Next, the difference $x_i - \bar{x}$ between each data point $x_i$ and the 
+the mean $\bar{x}$ of all data points is evaluated. If the data point is larger than 
+the mean, this yields a positive number. If the data point is smaller than the 
+mean, this yields a negative number. If the data point and the mean are virtually
+identical, this yields a number close to zero. To summarize the $n$ deviations 
+from the mean into a single number, the differences $x_i - \bar{x}$ are added up. However, 
+simply summing the differences $x_i - \bar{x}$ for $i=1,...,n$ will have the effect 
+that positive and negative deviations from the mean cancel each other out. 
+To prevent this, each difference is squared. The square of any number, positive or 
+negative, is always non-negative. Squaring the differences, i.e., evaluating 
+$(x_i - \bar{x})^2$ for $i = 1,...n$ thus has the effect of making all terms in the sum of 
+@eq-empirical-variance positive. It addition, large deviations between a data
+point and the mean contribute a lot to the sum, whereas small deviations contribute 
+little. For example, a diffence $x_i - \bar{x} = -5$, after squaring, contributes 
+$25$, whereas a difference $x_i-\bar{x} = 0.5$, after squaring contributes only $0.25$. 
+Evaluation of the sum of squared deviations then yields a single number that represents 
+the variability of the data points about their mean. In @eq-empirical-variance, 
+this number is finally standardized by division by $n-1$, i.e., the variability 
+is expressed roughly as an average per data point. It would be the exact average,
+if instead of dividing by $n-1$, the division would be by $n$. However, for a 
+large number of data points, this difference is virtually negligible, as e.g., 
+for $n = 100$, $\frac{1}{100} = 0.01$ and $\frac{1}{100-1} = 0.0099\approx 0.01$. 
+The motivation of the denominator $n-1$ is best understood in the context 
+of designing *unbiased estimators*, a concept which is beyond the scope of this 
+tutorial. In general, expressions such as 
+$$
+\sum_{i=1}^n \left(x_i - \bar{x}\right)^2
+$$
+in @eq-empirical-variance are called *sum-of-squares*, as they obviously represent 
+sums of squared values. Similarly, expressions such as 
+$$
+\frac{1}{n-1}\sum_{i=1}^n \left(x_i - \bar{x}\right)^2
+$$
+are called *mean sum-of-squares* as they represent averages of sum of squares.
+
+
+**Between-sum-of-squares and within-sum-of-squares.** The fundamental idea of ANOVA 
+as a computational procedure is to use sum-of-squares to quantify the variability 
+observed in an ANOVA data set. To this end, the data variability is partitioned 
+in a way that allows for inferring how much of it is likely due to the experimental 
+treatment factor and how much of it is due to unsystematic variation. 
+The approach is rather simplistic. On the one hand, ANOVA evaluates the variability 
+of the individual group means around the grand mean across all observational 
+units in all groups as a measure of potential treatment-induced effects. On the 
+other hand, ANOVA evaluates the average variability of individual data points 
+about their group mean across groups as a measure of unsystematic variation. Note that
+the latter variability cannot be treatment-induced, as each data point in a given 
+group was exposed to exactly the same treatment level (if the experiment was performed
+adequately). Both measures of variability are single numbers and are referred 
+to as *between-sum-of-squares* (variability between groups) and *within-sum-of-quares* 
+(variability within groups), respectively. Finally, asking how much bigger
+or smaller the mean between-sum-of-squares is than the mean within-sum-of-squares 
+by dividing the former by the latter yields a single number that indicates the size
+of the experimental treatment-induced variability in units of unsystematic variability. 
+This number is referred to as the *$F$-value* or *$F$-value* in commemoration of 
+Ronald A. Fisher, who famously described this computational procedure in his book 
+*Statistical Methods for Research Workers* a century ago (@fisher1925a). 
+
+To represent this logic formally, it is first necessary to introduce some general
+notation for the data of a one-way ANOVA design. We here use the convention, that
+$y_{ij}$ denotes the $j$th of $n_i$ data points in the $i$th of $p$ groups. Using
+this convention, the example data sets of @tbl-anova-data-set-1 and @tbl-anova-data-set-2 can 
+be denoted as shown in @tbl-y-ij-notation.
+
+\newpage
+
+| T1        | T2        | T3        | T4        |
+|:----------|:----------|:----------|:----------|
+| $y_{11}$  | $y_{21}$  | $y_{31}$  | $y_{41}$  |
+| $y_{12}$  | $y_{22}$  | $y_{32}$  | $y_{42}$  |
+| $y_{13}$  | $y_{23}$  | $y_{33}$  | $y_{43}$  |
+| $y_{14}$  | $y_{24}$  | $y_{34}$  | $y_{44}$  |
+| $y_{15}$  | $y_{25}$  | $y_{35}$  | $y_{45}$  |
+| $y_{16}$  | $y_{26}$  | $y_{36}$  | $y_{46}$  |
+| $y_{17}$  | $y_{27}$  | $y_{37}$  | $y_{47}$  |
+| $y_{18}$  | $y_{28}$  | $y_{38}$  | $y_{48}$  |
+| $y_{19}$  | $y_{29}$  | $y_{39}$  | $y_{49}$  |
+| $y_{110}$ | $y_{210}$ | $y_{310}$ | $y_{410}$ |
+
+: One-way ANOVA notation. In this scenario $p = 4$, $n_1 = n_2 = n_3 = n_4 = 10$ and $n = \sum_{i=1}^{p} n_i = 40$ {#tbl-y-ij-notation}
+
+The *between-sum-of-square* is then defined as
+$$
+\mbox{SQB} := \sum_{i=1}^{p} n_{i}\left(\bar{y}_{i}-\bar{y}\right)^{2},
+$$ {#eq-sqb}
+where 
+$$
+\bar{y} := \frac{1}{n} \sum_{i=1}^{p} \sum_{j=1}^{n_{i}} y_{ij} 
+$$ {#eq-bar-y}
+denotes the grand mean (mean across all data points in all groups) and  
+$$
+\bar{y}_{i}=\frac{1}{n_{i}} \sum_{j=1}^{n_{i}} y_{ij}
+$$ {#eq-bar-y-i}
+denotes the mean of the data points in the $i$th group. Large values of SQB 
+imply a strong dependence of the group sample means on the respective treatment level 
+$i$, while small values of SQB imply a weak dependence on the respective treatment level.
+In this sense, SQB represents the data variability explained by considering the 
+respective treatment level. Note that $\mbox{SQB}$ formula weighs the squared 
+deviation between the $i$th group mean and the grand mean by the number of 
+data points $n_i$ in the $i$th group. Deviations in larger groups thus contribute 
+more to the $\mbox{SQB}$ than deviations in smaller groups. In *balanced designs*,
+for which by definition all group sizes are identical, all groups contribute equally. 
+
+The *within-sum-of-squares* is defined as
+$$
+\mbox{SQW} := \sum_{i=1}^{p} \sum_{j=1}^{n_{i}}\left(y_{ij}-\bar{y}_{i}\right)^{2}.
+$$
+Here, the sum of squared deviations of all data points from their group-specific
+mean within a given group $\sum_{j=1}^{n_{i}}\left(y_{ij}-\bar{y}_{i}\right)^{2}$
+is summed across all $p$ groups. SQW thus represents the data variability summed 
+across all treatment levels that remains after the variability in the $i$th group 
+has been explained by its respective group mean. Note that in the $\mbox{SQB}$ the
+factor $n_i$ effectively scales the squared deviation between a group mean and 
+the grand mean to account for the missing summation over $j = 1,...,n_i$ in $\mbox{SQW}$.
+
+**Mean-sum-of-squares and $F$-value.** Dividing the $\mbox{SQB}$ and the $\mbox{SQW}$ 
+by the number of contributing data points to obtain an average squared deviation 
+per data point yields the so-called *mean between-sum-of-squares* and 
+*mean-between-sum-of-squares*
+$$
+\mbox{MSB}:=\frac{\mbox{SQB}}{p-1} \mbox{ and }
+\mbox{MSW}:=\frac{\mbox{SQW}}{n-p}.
+$$ {#eq-msb-msw}
+The denominators in @eq-msb-msw can be understood by realizing, that approximately 
+$p$ "data points", i.e. group means contribute to the $\mbox{MSB}$ and approximately 
+$n$ data points contribute to the $\mbox{SQW}$. The exact numbers in the denonminators
+are referred to as *degrees of freedom*, such that the *between-group degrees of freedom (DFB)*
+are given by $p-1$ and the *within-group degrees of freedom (DFW)* are given by $n-p$.
+
+The *$F$-value* is defined as the ratio of $\mbox{MSB}$ and $\mbox{MSW}$, 
+$$
+F = \frac{\mbox{MSB}}{\mbox{MSW}}.
+$$ {#eq-F-value}
+$F$-values larger than $1$ thus indicate that the $\mbox{MSB}$ is larger than the 
+$\mbox{MSB}$. In this sense, $F$-values larger than $1$ thus indicate that the 
+averaged treatment-induced group mean variability is larger than the data point 
+variability at a constant treatment level. The following **R** code evaluates the 
+necessary quantities for computing the $F$-value for the example data sets 
+of @tbl-anova-data-set-1 and @fig-anova-data-set-1.
+
+\tiny
+```{r, echo = T}
+D       = read.csv("./_data/anova-data-set-1.csv")                              # dataframe in long format                                                
+Y       = as.matrix(data.frame(split(D$Collagen, D$Treatment)))                 # wide format as simple matrix  
+y_bar   = mean(Y)                                                               # grand mean 
+y_bar_i = colMeans(Y)                                                           # group means
+DFB     = ncol(Y) - 1                                                           # p -1
+DFW     = length(Y) - ncol(Y)                                                   # n - p
+SQB_i   = (y_bar_i - y_bar)^2                                                   # SQB terms
+SQB     = sum(SQB_i * nrow(Y))                                                  # SQB 
+SQW_i   = colSums((Y-matrix(y_bar_i,nrow(Y),length(y_bar_i), byrow = TRUE))^2)  # SQW terms
+SQW     = sum(SQW_i)                                                            # SQW
+MSB     = SQB/DFB                                                               # MSB  
+MSW     = SQW/DFW                                                               # MSW
+Eff     = MSB/MSW                                                               # F-value       
+```
+\normalsize
+The results are as follows.
+\tiny
+```{r, echo = F}
+# Ausgabe
+cat("y_bar   :"  , round(y_bar,3),
+    "\ny_bar_i :", round(y_bar_i,3),
+    "\nDFB     :", round(DFB,3),
+    "\nDFW     :", round(DFW,3),
+    "\nSQB_i   :", round(SQB_i,3),
+    "\nSQB     :", round(SQB,3),
+    "\nSQW_i   :", round(SQW_i,3),
+    "\nSQW     :", round(SQW,3),
+    "\nMSB     :", round(MSB,3),
+    "\nMSW     :", round(MSW,3),
+    "\nF       :", round(Eff,3))
+```
+
+\normalsize
+Obviously, the group means deviate significantly from the grand mean, while the
+deviation of each data point from its respective group mean is not too large. Together,
+this results in an $F$-value that is a lot larger than 1. 
+
+For the example data set of @tbl-anova-data-set-2 and @fig-anova-data-set-2, 
+the results are as follows.
+
+\tiny
+```{r, echo = F}
+D       = read.csv("./_data/anova-data-set-2.csv")                              # dataframe in long format                                                
+Y       = as.matrix(data.frame(split(D$Collagen, D$Treatment)))                 # wide format as simple matrix  
+y_bar   = mean(Y)                                                               # grand mean 
+y_bar_i = colMeans(Y)                                                           # group means
+DFB     = ncol(Y) - 1                                                           # p -1
+DFW     = length(Y) - ncol(Y)                                                   # n - p
+SQB_i   = (y_bar_i - y_bar)^2                                                   # SQB terms
+SQB     = sum(SQB_i * nrow(Y))                                                  # SQB 
+SQW_i   = colSums((Y-matrix(y_bar_i,nrow(Y),length(y_bar_i), byrow = TRUE))^2)  # SQW terms
+SQW     = sum(SQW_i)                                                            # SQW
+MSB     = SQB/DFB                                                               # MSB  
+MSW     = SQW/DFW                                                               # MSW
+Eff     = MSB/MSW                                                               # F-value       
+```
+```{r, echo = F}
+# Ausgabe
+cat("y_bar   :"  , round(y_bar,3),
+    "\ny_bar_i :", round(y_bar_i,3),
+    "\nDFB     :", round(DFB,3),
+    "\nDFW     :", round(DFW,3),
+    "\nSQB_i   :", round(SQB_i,3),
+    "\nSQB     :", round(SQB,3),
+    "\nSQW_i   :", round(SQW_i,3),
+    "\nSQW     :", round(SQW,3),
+    "\nMSB     :", round(MSB,3),
+    "\nMSW     :", round(MSW,3),
+    "\nF       :", round(Eff,3))
+```
+
+\normalsize
+For this data set, the individual group means do not vary much about the grand
+mean, such that the $\mbox{SQB}$ is not large in comparison to the $\mbox{SQW}$
+and the $F$-value thus smaller than 1. 
+
+In **R**, the in-built function `aov()` can be used to obtain the same results.
+In the following code, the `aov(D$Collagen ~ D$Treatment, data = D)` syntax means that the data
+in the dataframe field `Collagen` should be grouped according to the information 
+in the dataframe field `Treatment`. The generic `summary()` function than prints
+results of the computation to the command window. Here `D$Treament` corresponds 
+to the *between* quantities and `Residuals` corresponds to the *within* quantities.
+The meaning of `Pr(>F)` and the associated Significance codes will become clearer after
+in @sec-anova-as-a-linear-model.
+
+\tiny
+```{r, echo = T}
+D       = read.csv("./_data/anova-data-set-1.csv")                              # data set 1 
+res.aov = aov(D$Collagen ~ D$Treatment, data = D)                               # ANOVA as a computational procedure
+summary(res.aov)                                                                # results 
+```
+
+```{r, echo = T}
+D       = read.csv("./_data/anova-data-set-2.csv")                              # data set 2
+res.aov = aov(D$Collagen ~ D$Treatment, data = D)                               # ANOVA as a computational procedure
+summary(res.aov)                                                                # results  
+```
+\normalsize
+
+**Partitioning of the Total-Sum-Squares**. The $\mbox{SQB}$ and $\mbox{SQW}$
+are mutually dependent quantities, in the sense that their sum corresponds to the 
+*total-sum-squares* of a given data set. The total-sum-of-squares corresponds to 
+the squared deviations of all data points regardless of group membership from 
+the grand mean,   
+$$
+\mbox{SQT} := \sum_{i=1}^{p} \sum_{j=1}^{n_{i}}\left(y_{ij}-\bar{y}\right)^{2}.
+$$ {#eq-sqt}
+As shown in @sec-total-sum-of-squares-partition, it holds that
+$$
+\mbox{SQT} = \mbox{SQB}  + \mbox{SQW}.
+$$ {#eq-sqt-partition}
+If one understands the $\mbox{SQB}$ as a measure of the treatment-induced variability
+and the $\mbox{SQW}$ as a measure of the data set's inherent unsystematic and random 
+variability, @eq-sqt-partition can intuitively be read as 
+$$
+\mbox{Total data variability} = \mbox{Treatment-induced data variability}  + \mbox{Unsystematic data variability}.
+$$ {#eq-sqt-partition-intuition}
+@eq-sqt-partition-intuition then forms the basis for understanding ANOVA from a linear
+model perspective as discussed next.
+
+# ANOVA as a linear model {#sec-anova-as-a-linear-model}
+## Model formulation {#sec-model-formulation}
+
+A deeper understanding of the ANOVA approach is afforded by viewing it as an 
+instance of a *linear modelling approach* to data analysis. In contrast to the 
+computational viewpoint described above, modelling approaches do not start with 
+a data set at hand and merely constitute a set of formulas to summarize such data set, 
+but first and foremost provide hypotheses about the generative processes that 
+give rise to observed data. As such, modelling approaches subserve the theoretical 
+and deductive side of science, as well as its empirical and inductive aspects. 
+Linear models can be shown to underlie a wide variety of methods from classical statistics, 
+such as $z$- and $t$-tests, one-factorial and multifactorial ANOVA, simple linear regression, multiple 
+linear regression and the analysis of covariance (ANCOVA). They also form the 
+backbone for more generalized  approaches to data analysis, such as multivariate, 
+latent variable or nonlinear data modelling. A modern comprehensive introduction 
+to linear models cannot eshew a detour through probability theory and some basics 
+of linear algebra. However, for the purposes of this tutorial, attention is 
+restricted to the structural features of the linear model in the context of ANOVA. 
+The probabilistic components are addressed primarily through intuitive explanations, 
+and references to matrix-based computations are deliberately omitted.
+
+In essence, the linear modelling approach to ANOVA conceives each observed
+data point as the sum of a *deterministic component* induced by the treatment 
+at each level and an unsystematic *random component* induced by additional 
+processes such as the particularities of the observational unit under study or
+inadvertent variations in the experimental application of the respective 
+treatment level:
+$$
+\mbox{Data} = 
+\mbox{Deterministic treatment-induced component} + 
+\mbox{Random unsystematic component}
+$$ {#eq-linear-model-intuition}
+Note the similarity of this idea to the decomposition of the total data variability
+in @eq-sqt-partition-intuition. More formally, the basic model for $j$th data 
+point in the $i$th treatment group of an ANOVA design takes the form
+$$
+y_{ij} = \mu_i + \varepsilon_{ij}.
+$$ {#eq-y-ij}
+Here, $\mu_i$ is a fixed, deterministic unknown number that depends on the treatment
+level $i = 1,...,p$. $\varepsilon_{ij}$ is a random variable that is specific to the 
+$j$th data point in the $i$th treatment group, hence the double index. $\varepsilon_{ij}$
+is variably referred to as an *error variable*, a *measurement error*, or a *random fluctuation*. 
+As a random variable, $\varepsilon_{ij}$ takes on values at random with prespecified 
+probabilities. A standard assumption for the error terms in linear models is that 
+they follow a normal distribution (cf. @sec-the-normal-distribution), that is, 
+a Gaussian bell-shaped curve centered at zero with variance parameter $\sigma^2$. 
+This means that if one generates multiple realizations of a random variable like 
+$\varepsilon_{ij}$, these realizations have a higher probability to be located 
+close to zero than being located far away from zero. Because under this assumption 
+most of the time $\varepsilon_{ij}$ in @eq-y-ij takes on values close to zero, 
+$y_{ij}$ most of the time takes on values close to $\mu_i$, rendering $\mu_i$ 
+its so-called *expected value*. We will go a bit deeper into the significance 
+of the $\varepsilon_{ij}$ component for the applied ANOVA procedure in @sec-inference. 
+For the moment we focus on the deterministic component $\mu_i$ that we have identified 
+as the expected value of the data point $y_{ij}$. 
+
+While in principle using a single number $\mu_i$ for each treatment-level to reflect 
+the deterministic data component of a data point $y_{ij}$ is perfectly fine, most
+statistical software solutions use a different representation that has better 
+generalisation properties to more complex data acquisition scenarios and fits the 
+matrix computations underlying the evaluation of linear models in software better. This 
+parameterization is commonly referred to as *reference group coding*. The idea 
+of this approach is to encode the expected value of the data points in a 
+specific group, referred to as the *reference group*, by a value $\mu_0$ and to 
+only encode the *differences* in expected values between the treatment groups and
+the reference group as additional parameters. Which group is chosen as the reference 
+group is not of primary importance, when using statistical software, its usually the first 
+group in a data table. However, if there exists a baseline group in which e.g.,
+no treatment or a sham-treatment is applied, it is sensible to use this as the
+reference group for the remaining parameters to be readily interpretable. In the 
+reference group coding approach to ANOVA, the linear model for the data points
+$y_{ij}$ takes the form
+$$
+y_{1j} = \mu_0 + \varepsilon_{1j}
+\mbox{ and }
+y_{ij} = \mu_0 + \alpha_i + \varepsilon_{ij}
+\mbox{ for }
+i = 2,...,p.  
+$$ {#eq-anova-lm}
+The values $\alpha_2,...,\alpha_p$ encode the differences in expected values between the $i$th 
+group and the reference group. A fundamental aim of ANOVA as an inference approach 
+is to infer whether the true values of $\alpha_2,...,\alpha_p$ are different 
+from zero or not.  
+
+## Parameter estimation {#sec-parameter-estimation}
+
+@eq-anova-lm constitutes a model for a data set acquired in an ANOVA design.
+As most models of quantitative phenomena, @eq-anova-lm has parameters that are 
+*estimated* based on the observed data $y_{ij}$. To understand this, it is sensible
+to reflect again on the data generative process that is encoded in @eq-anova-lm.
+The idea is that the data values $y_{1j}, j = 1,...,n_1$ in the reference group 
+are generated based on a fixed unknown value for the measured property in the
+reference group, which is termed $\mu_0$. However, this value of $\mu_0$ is not
+directly observed, but only after addition of the observational unit-specific random
+term $\varepsilon_{1j}$. Likewise, the values of $\mu_0$ and $\alpha_i$ 
+for the remaining groups are only observed after addition of their respective random
+contributions $\varepsilon_{ij}$. In this setting, the values of $\mu_0$ and 
+$\alpha_i$ are referred to as *true, but unknown, values*. In fact, even after an 
+ANOVA is computed, the actual values of $\mu_0$ and $\alpha_i$ will remain unknown. 
+However, during the execution of an ANOVA procedure *reasonable guesses* or 
+*estimates* for $\mu_0$ and the $\alpha_i$'s are evaluated. 
+
+The ANOVA parameter estimates can be motivated by noting that the random contributions 
+are symmetrically distributed around zero under the assumption of their normality. 
+If we consider for example the reference group with $n_1 = 5$ and assume that 
+$\mu_0 = 5$ and $\varepsilon_{11} = 0$, $\varepsilon_{12} = 1$, $\varepsilon_{13} = -1$, 
+$\varepsilon_{14} = 2$ $\varepsilon_{15} = -1$, we obtain the data points
+
+\begin{center}
+\begin{tabular}{l}
+$y_{11} = \mu_0 + \varepsilon_{11} = 5 + 0 = 5$ \\
+$y_{12} = \mu_0 + \varepsilon_{12} = 5 + 1 = 6$ \\
+$y_{13} = \mu_0 + \varepsilon_{13} = 5 - 1 = 4$ \\
+$y_{14} = \mu_0 + \varepsilon_{14} = 5 + 2 = 7$ \\
+$y_{15} = \mu_0 + \varepsilon_{15} = 5 - 1 = 4$ \\
+\end{tabular}
+\end{center}
+
+As positive and negative contributions to $\mu_0$ cancel each other out when 
+computing an average across these $y_{1i}$'s, a reasonable procedure to estimate
+$\mu_0$ is to use the mean of the $y_{1i}$ as an estimate for $\mu_0$.
+Estimates for true, but unknown, parameters are usually denoted with a little hat.
+Thus, the usual estimate of $\mu_0$ in this scenario is 
+$$
+\hat{\mu}_0 = \frac{1}{n_1}\sum_{j=1}^{n_1} y_{1j},
+$$
+which for the data shown above evaluates to $\hat{\mu}_0 = 5.2$. This value is 
+obviously not identical with the true, but unknown value of $\mu_0$, but also not
+too far off. The statistical theory of linear models indeed assures that in the one-way
+ANOVA scenario with reference group coding, the formation of group averages is 
+a reasonable approach to estimate the parameters $\mu_0$, $\alpha_2$, ..., $\alpha_p$. 
+Specifically, it can be shown that a reasonable estimator for $\mu_0$ is indeed 
+the mean of the reference group and the differences between the respective group 
+means and the mean of the reference group are reasonable estimators for 
+$\alpha_2$, ..., $\alpha_p$, formally,
+$$
+\hat{\mu}_0 = \bar{y}_1 = \frac{1}{n_1}\sum_{j=1}^{n_1} y_{1j} 
+\mbox{ and }
+\hat{\alpha}_i 
+= \bar{y}_i - \bar{y}_1 
+= \frac{1}{m}\sum_{j=1}^{m} y_{ij} - \frac{1}{n_1}\sum_{j=1}^{n_1} y_{1j}
+\mbox{ for } i = 1,...p.
+$$ {#eq-parameter-estimation}
+
+Note that the estimation of $\alpha_i$ as the difference between the $i$th group mean
+and the reference group mean is well in line with the interpretation of $\alpha_i$
+as encoding the difference in expected value between the $i$th group values and the 
+reference group values.
+
+In **R** parameter estimates such as $\hat{\mu}_0$ and $\hat{\alpha}_2$,..., $\hat{\alpha}_p$ 
+are routinely evaluated when using the linear modelling approach
+to ANOVA. The generic function to apply all sorts of linear models to data in **R** 
+is `lm()`. To execute an ANOVA as described above, the syntax `lm(D$Collagen ~ D$Treatment, data = D)`
+here again means that the data in the dataframe field `Collagen` should be grouped
+according to the information in the dataframe field `Treatment`. When calling `lm()`
+in this manner, the respective linear model is formulated and, based on the data
+at hand, the parameter estimates are evaluated. These can be inspected in the 
+`coefficients` field of the resulting **R** object. We demonstrate this for 
+the data set in @tbl-anova-data-set-1. Note that the `(Intercept)` term $\hat{\mu}_0$ 
+corresponds to  the mean of the first group (`T1`), which is used as reference group, 
+and the `D$TreatmentT2`, `D$TreatmentT3`, `D$TreatmentT4` terms for $\hat{\alpha}_2$, 
+$\hat{\alpha}_3$, and $\hat{\alpha}_4$ correspond to the differences of the 
+respective group means and the reference group mean.
+
+\tiny
+```{r, echo = T}
+# ANOVA as a linear model analysis
+D         = read.csv("./_data/anova-data-set-1.csv")                            # data set 1
+anova     = lm(D$Collagen ~ D$Treatment, data = D)                              # ANOVA as a computational procedure
+print(anova$coefficients)                                                       # parameter estimates
+
+# comparison with group means
+Y         = as.matrix(data.frame(split(D$Collagen, D$Treatment)))               # wide format as simple matrix  
+y_bar_i   = colMeans(Y)                                                         # group means 
+mean_ref  = y_bar_i[1]                                                          # reference group mean
+mean_ref                                                                        # print
+mean_diff = y_bar_i[2:4] - y_bar_i[1]                                           # group mean differences
+mean_diff                                                                        # print
+```
+
+\normalsize
+## Inference {#sec-inference}
+
+To understand the logic of *$p$-values* and related concepts such as *Frequentist
+estimator properties*, *confidence intervals* and *error control in hypothesis testing*, 
+it is crucial to remind oneself of the *Frequentist probability interpretation*  used 
+standard applications of linear models. We have already noted that in the ANOVA 
+model @eq-anova-lm the parameters $\mu_0$ and $\alpha_2,...,\alpha_p$ are conceived
+as fixed unknown values that govern the data generating process of the ANOVA
+scenario. For $i = 1,...,p$ and $j = 1,...,m$ the $\varepsilon_{ij}$'s, on the other
+hand, are conceived as random variables. Random variables take on values with 
+prespecified probabilities. For example, we can talk about the probability that 
+the random variable $\varepsilon_{23}$ takes on a value in an interval such as 
+$[-0.10,0.10]$. The probability for the error variable $\varepsilon_{23}$ 
+to take on specific values also determines the probability of $y_{23}$ to take on 
+specific values, given fixed values of $\mu_0$ and $\alpha_2$. For example, if 
+$\mu_0 = 1$ and $\alpha_2 = 2$ and $\varepsilon_{23}$ has a high probability to take
+on values in the interval $[-0.10,0.10]$, then $y_{23}$ has a high probability 
+to take on values in the interval $[1 + 2 -0.10, 1 + 2 + 0.10] = [2.90,3.10]$. The
+important thing here is to realize that given the fixed nature of the parameters
+$\mu_0$ and $\alpha_i, i = 2,...,p$ and the random nature of the $\varepsilon_{ij}$'s
+also the data variables are conceived as random variables.  
+
+Now the fundamental assumption of the Frequentist approach to statistics is to assume
+that a given data set, such as the data presented in @tbl-anova-data-set-1, reflects a single 
+realization of each of the $\varepsilon_{ij}$'s and in turn the $y_{ij}$'s for 
+true, but unknown, fixed parameters $\mu_0$ and $\alpha_i, i = 2,...,p$. From this
+viewpoint, the collection of the $y_{ij}$'s in @tbl-anova-data-set-1 thus represents a single
+joint realization of the random variables constituting the respective ANOVA
+design. Against the background of the assumed random nature of the $\varepsilon_{ij}$'s 
+involved, however, it is easily conceivable to imagine a second joint realization
+of the random variables constituting the ANOVA design. In basic introductions
+to statistics this is sometimes presented as "repeating the same study under identical
+circumstances and collecting data that, by an large, up to random fluctation, resembles
+that of the initial study". Yet, it is crucial to realize that the Frequentist assumption
+underlying classical inference in linear models is just this, an assumption. In essence
+it constitutes a cognitive model that is superimposed onto observed data and is 
+no more "real" or "unreal" than any other form of human imagination. Nevertheless
+superimposing the Frequentist assumption on a given experimental and data-analytical 
+scenario allows for asking how observed data, or numbers computed from these data, 
+such as means, sum-of-squares, mean sum-of-squares or $F$-values are distributed,
+assuming known-properties of the random variables involved in the data generating
+process, given here by the $\varepsilon_{ij}$'s. 
+
+A straighforward way to gain intuition about the Frequentist distributional 
+properties of data-analytical quantities is to simulate the repeated execution 
+of a given study with identical true, but unknown, parameters on a computer. 
+As this approach makes abundant use of random number generators, it is sometimes 
+referred to as a *Monte Carlo approach* in reference to the famous casino in 
+Monte Carlo. We prefer to refer to it as a *sampling approach*, as random 
+variables are repeatedly sampled. For example, the following **R** code generates 
+10 samples from a single normal random variable with expectation parameter $2$ 
+and variance parameter $1$.
+
+\tiny
+```{r, echo = T}
+n = 1                                                                           # number of random variables
+s = 10                                                                          # number of samples taken
+m = 2                                                                           # expectation parameter
+v = 1                                                                           # variance parameter
+for(i in 1:s){                                                                  # repeated sampling          
+  print(rnorm(n,m,v))}                                                          # sampling a normally distributed random variable      
+```
+\normalsize 
+
+To understand the notion of an *$F$-distribution* and the associated *$p$-value*
+of an observed *$F$-value*, it is crucial to realize that in essence, an $F$-value 
+is a fairly condensed representation of a data set as presented in @tbl-anova-data-set-1.
+Everytime a new data set is realized (in simulation or reality), new grand
+means, new group means, new sum-of-squares, new mean-sum-of-squares and a new 
+$F$-value are realized. The fundamental logic of *$p$-values* is then to ask, how
+probable a random $F$-value at least as extreme as an actual observed $F$-value under the 
+assumption that, in the ANOVA design, all true, but unknown, group differences
+with respect to the reference group $\alpha_2,...,\alpha_p$ are zero. This latter
+assumption 
+$$
+\alpha_2 = \cdots = \alpha_p = 0
+$$
+is referred to as the *(global) null hypothesis* in an ANOVA design, as 
+it represents the assumption of no treatment-induced effects. Note that the null
+hypothesis is formulated with respect to the true, but unknown, values not their
+empirical counterparts, such as the $\hat{\alpha}_2$,..., $\hat{\alpha}_p$. 
+The logic of  Frequentist inference is then to conclude that if the probability 
+$p$ of observing a random $F$-value at least as extreme, i.e., equal to or larger than,
+the actual observed $F$-value is small, the null hypothesis should be rejected. 
+This is the essence of the highly controversial, but very popular 
+*null-hypothesis significance testing* approach of classical Frequentist 
+statistics. In the following, we trace how the distribution of the $F$-value is 
+constructed based on the normal assumption about the error variables in the ANOVA
+linear model to illustrate the impact of the probabilistic assumptions in 
+@eq-anova-lm for the practice of reporting $p$-values.
+
+### Construction of the $F$-distribution {-}
+
+The Frequentist distribution of the $F$-value under the null hypothesis of the 
+ANOVA model derives from sequential transformations of the error variables 
+$\varepsilon_{ij}$ for all $i = 1,...,p$ and $j = 1,...,n_i$. As discussed above, 
+the error variables are assumed to be *identically* distributed according to a 
+normal distribution with expectation parameter $0$ and variance parameter $\sigma^2$. 
+Furthermore, the error variables are assumed to be *independently* distributed. 
+In the context of normal distributions, this also implies that they are uncorrelated. 
+Formally, this means that the distribution of a single $\varepsilon_{ij}$ can 
+be described by the probability density function of the univariate normal distribution,
+$$
+p\left(\varepsilon_{ij}\right) := \frac{1}{\sqrt{2\pi\sigma^2}}\exp\left(-\frac{1}{2\sigma^2}\left(\varepsilon_{ij}-\mu\right)^2\right)
+$$
+for $\mu:=0$. Intuitively, this means, that if a certain observational unit realizes
+by chance for example a high value for its error variable, the probability for 
+none of the other observational units to also realize a very high (or, 
+for negative covariations, a very low) error variable value is affected in any way. 
+The essence of the Frequentist distribution framework for the ANOVA model 
+leading up to the $F$-value distribution is then to mathematically derive the 
+formulas for the distributions of the transformed independent and identically normally 
+distributed error variables through the various stages of the ANOVA model and 
+the evaluation of the various statistics cumulating in the $F$-distribution. 
+Tracing this process mathematically is beyond the scope of the current tutorial. 
+We nevertheless list the core steps below and provide a sampling-based validation 
+in @fig-anova-F-distribution. 
+
+(1) The assumption of identically and independently normally distributed error 
+variables, exemplarily shown for $\varepsilon_{11}$ in @fig-anova-F-distribution\unskip A, 
+results in the fact that under the ANOVA model, the data variables $y_{ij}$ 
+are independently normally distributed with the same variance as the error variables,
+examplarily shown in @fig-anova-F-distribution\unskip B, as adding constant numbers to 
+normally distributed random variables results in another normally distributed 
+random variable.
+
+(2) The normal distribution of the data variables $y_{ij}$ in turn implies the 
+normal distribution of the group means, exemplarily shown for $\bar{y}_1$ in
+@fig-anova-F-distribution\unskip C  and the grand mean, as shown in @fig-anova-F-distribution\unskip D, 
+as summing together normally distributed random variables and multiplying them 
+by a constant renders the result normally distributed.
+
+(3) Subtracting normally distributed random variables from each other yields yet 
+other normally distributed random variables, such that the deviations in the 
+$\mbox{SQB}$ and the $\mbox{SQW}$ are themselves normally distributed, as shown 
+exemplarily for $y_{11} - \bar{y}_1$ and $\bar{y}_1 - \bar{y}$ in @fig-anova-F-distribution\unskip E
+and @fig-anova-F-distribution\unskip F, respectively.
+
+(4) Squaring normally distributed random variables, in the current case the 
+deviations between individual data variables and their group mean or the group 
+means and the grand mean, does not result in normally distributed random variables. 
+This is readily appreciated by considering a random variable centered around zero 
+and considering the square of its realizations - all negative realizations will
+become positive, values between 0 and 1 will move closer to zero and values 
+above 1 will move further away from 1. Squaring thus breaks the symmetry of 
+normally distributed values. Broadly speaking, the square of an independent 
+normally distributed random variable, as well as the sum of such squares, 
+follows a $\chi^2$ distribution. Unlike the normal distribution, the corresponding 
+probability density function has a different — yet analytically available — form.
+In the context of the $F$-distribution, the variance-scaled versions of $\mbox{SQB}$ 
+and $\mbox{SQW}$ are independently $\chi^2$-distributed with parameters $p-1$ and $n-p$,
+respectively, as shown in @fig-anova-F-distribution\unskip G and @fig-anova-F-distribution\unskip H.
+
+(5) Finally, forming the ratio of two independent $\chi^2$-distributed random 
+variables divided by their respective parameters leads to a distribution with 
+probability density function referred to as the $F$-distribution, as shown in 
+@fig-anova-F-distribution\unskip I.
+
+```{r, echo = F, eval = F}
+library(MASS)                                                                   # multivariate normal distribution
+set.seed(2)                                                                     # reproducibility 
+m       = 10                                                                    # number of observational units per group
+p       = 4                                                                     # number of groups 
+n       = p*m                                                                   # number of observation units 
+Xt        = cbind(                                                              # design matrix
+             matrix(1,nrow = n, ncol = 1),                                      # design matrix
+             kronecker(diag(p), matrix(1,nrow = m,ncol = 1)))                   # design matrix
+X       = Xt[,-2]                                                               # design matrix
+I_n     = diag(n)                                                               # n x n identity matrix
+beta    = matrix(c(5,0,0,0), nrow = p)                                          # \beta in \Omega_0
+sigsqr  = 4                                                                     # \sigma^2   
+
+# sample arrays
+nsamp   = 100000                                                                # number of samples
+eps_11  = rep(NaN, nsamp)                                                       # error variable
+y_11    = rep(NaN, nsamp)                                                       # data variable
+y_bar   = rep(NaN, nsamp)                                                       # grand mean   
+y_bar_1 = rep(NaN, nsamp)                                                       # group mean
+SQB     = rep(NaN, nsamp)                                                       # between sum of squares
+SQW     = rep(NaN, nsamp)                                                       # within  sum of squares
+Eff     = rep(NaN, nsamp)                                                       # F-values
+for(s in 1:nsamp){                                                              # sampling iterations
+  eps         = mvrnorm(1, rep(0,n),sigsqr*I_n)                                 # error vector
+  eps_11[s]   = eps[1]                                                          # error variable
+  y           = X %*% beta + eps                                                # data vector    
+  y_11[s]     = y[1]                                                            # data variable
+  D           = data.frame(TR = rep(paste0("T", 1:4), each = m), CG = y)        # dataframe
+  Y           = as.matrix(data.frame(split(D$CG, D$TR)))                        # wide format as simple matrix  
+  y_bar[s]    = mean(Y)                                                         # grand mean 
+  y_bar_i     = colMeans(Y)                                                     # group means
+  y_bar_1[s]  = y_bar_i[1]                                                      # group means
+  DFB         = ncol(Y) - 1                                                     # p -1
+  DFW         = length(Y) - ncol(Y)                                             # n - p
+  SQB_i       = (y_bar_i - y_bar[s])^2                                          # SQB terms
+  SQB[s]      = sum(SQB_i * nrow(Y))                                            # SQB 
+  SQW_i       = colSums((Y-matrix(y_bar_i,nrow(Y),length(y_bar_i),byrow=TRUE))^2) # SQW terms
+  SQW[s]      = sum(SQW_i)                                                      # SQW
+  MSB         = SQB[s]/DFB                                                      # MSB  
+  MSW         = SQW[s]/DFW                                                      # MSW
+  Eff[s]      = MSB/MSW                                                         # F-value
+}
+```
+
+```{r, eval = F}
+# visualization
+library(latex2exp)
+pdf(                                                                             
+file        = "./_figures/anova-$F$-distribution.pdf",                
+width       = 14,                                                                     
+height      = 14)                                
+par(                                                                    
+family      = "sans",                                                  
+mfcol       = c(3,3),
+mar         = c(4,4,2,1), 
+oma         = c(1,1,3,1),                                                  
+pty         = "m",                                                     
+bty         = "l",                                                     
+lwd         = 1,                                                       
+las         = 1,                                                       
+mgp         = c(2,1,0),                                                
+xaxs        = "i",                                                   
+yaxs        = "i",                                                  
+font.main   = 1,                                                       
+cex         = 1.2,
+cex.main    = 1.2)
+
+# analytical distributions
+samples = 
+list(
+eps_11, 
+y_11, 
+y_bar_1, 
+y_bar, 
+y_11 - y_bar_1, 
+y_bar_1 - y_bar,
+SQB/sigsqr,
+SQW/sigsqr,
+Eff)
+values = list(
+seq(-5,5,len = 1000),
+seq(0,10,len = 1000),
+seq(0,10,len = 1000),
+seq(0,10,len = 1000),
+seq(-5,5,len = 1000),
+seq(-8,8,len = 1000),
+seq(0,10,len = 1000),
+seq(0,100,len = 1000),
+seq(0,10,len = 1000))
+pdfs = 
+list(
+dnorm(values[[1]], 0, sqrt(sigsqr)),
+dnorm(values[[2]], beta[1], sqrt(sigsqr)),
+dnorm(values[[3]], beta[1], sqrt(sigsqr/m)),
+dnorm(values[[4]], beta[1], sqrt(sigsqr/n)),
+dnorm(values[[5]], 0, sqrt(sigsqr*(1 - 1/m))),
+dnorm(values[[6]], 0, sqrt(sigsqr/m - sigsqr/n)),
+dchisq(values[[7]], p-1),
+dchisq(values[[8]], n-p),
+df(values[[9]], p-1, n-p))
+tlabs = 
+c(
+TeX('$\\epsilon_{11}$'),
+TeX('$y_{11}$'),
+TeX('$\\bar{y}_{1}$'),
+TeX('$\\bar{y}$'),
+TeX('$y_{11} - \\bar{y}_1$'),
+TeX('$\\bar{y}_{1} - \\bar{y}$'),
+TeX('$SQB/\\sigma^2$'),
+TeX('$SQW/\\sigma^2$'),
+TeX('$F$'))
+yulim   = c(0.25,0.25,0.7,1.4,0.25,0.8,0.30,0.06,0.8)
+for(i in 1:9){
+  hist(
+  samples[[i]],                                                                       
+  breaks      = 100,                                                                
+  col         = "gray90",                                                           
+  prob        = TRUE,                                 
+  xlab        = "",                                                                
+  ylab        = "",  
+  ylim        = c(0, yulim[i]),                                                               
+  main        = tlabs[i])
+  lines(
+  values[[i]],                                                                          
+  pdfs[[i]],                                                                       
+  lwd         = 2,                                                                  
+  col         = "darkorange")  
+}
+dev.off()
+```
+
+![Construction of the $F$-distribution.](./_figures/anova-F-distribution-labeled.pdf){#fig-anova-F-distribution fig-align="center" width=90%}
+
+### The $p$-value {-}
+
+Because the $F$-value takes on larger values, if the true, but unknown, parameters 
+$\alpha_2,...,\alpha_p$ take on values different from zero, asking how probable a 
+given observed value of the $F$-value or a more extreme value is, gives a 
+probability that becomes small for evidence against the null hypothesis. This 
+probability is known as the *$p$-value* and can be visualized as the area under 
+the curve of the $F$-distribution to the right of an observed $F$-value (@fig-anova-p-value). 
+If this probability is low, for example lower than 0.05, the evidence in a data set 
+is commonly interpreted as considerable evidence against the null hypothesis. 
+Note however, that the $p$-value itself has no implications for the veracity or 
+non-veracity of the null hypothesis: $F$-values at least as large as an observed 
+$F$-value are just not very likely in the case that the null hypothesis is 
+true, but they are by no means impossible. In fact, their associated probability 
+is just the $p$-value. Also note that the existence of a $p$-value is crucially 
+dependent on the normal distribution assumption of the error terms, as its value 
+derives from the $F$-distribution, which is constructed based on exactly this 
+distribution. In the **R** ANOVA table, the $p$-value is listed as `Pr(>F)`. With
+the help of the cumulative distribution function of the $F$-distribution, which 
+encodes the probability $\mathbb{P}(F \le f)$ for all observable $F$-values $f$, 
+the $p$-value can be readily evaluated based on the following **R** code. @fig-anova-p-value
+visualizes this process.
+
+\tiny
+```{r, echo = T}
+p       = 4                                                                     # number of groups
+m       = 10                                                                    # number of observational units per group
+n       = p*m                                                                   # total number of data points    
+F_value = 0.5                                                                   # observed $F$-value
+p_value = 1-pf(F_value, p-1, n-p)                                               # associated p-value
+cat("p-value: ", round(p_value,3))                                              # print
+```
+\normalsize
+
+Finally, we note that the distribution of the $F$-value cannot only be evaluated under 
+the null hypothesis $\alpha_2 = \cdots = \alpha_p = 0$, but equally well under any 
+other hypothesis about the true, but unknown, parameters. This leads to the 
+concept of the non-central $F$-distribution, an important tool in the context 
+of ANOVA power analyses and optimal sample size calculations in the Frequentist setting.
+
+```{r,echo = F, eval= F}
+# PDF Speicherung
+pdf(
+file        =  "./_figures/anova-p-value.pdf",
+width       = 9,
+height      = 4.5)
+par(
+family      = "sans",
+mfcol       = c(1,2),
+pty         = "m",
+bty         = "l",
+lwd         = 1,
+las         = 1,
+mgp         = c(2,1,0),
+xaxs        = "i",
+yaxs        = "i",
+font.main   = 1,
+cex         = 1,
+cex.main    = 1.2)
+
+# Parameter
+p           = 4                                                                 # Anzahl Gruppen
+m           = 10                                                                # Anzahl experimenteller Einheiten pro Gruppe
+n           = p*m                                                               # Gesamtstichprobengröße
+F_value     = 0.5                                                               # F-value
+eff         = seq(0,5,length=1e4 )                                              # F-Statistikwerte
+Peff        = pf(eff,p-1,n-p)                                                   # F-Statistik KVF für H_0
+peff        = df(eff,p-1,n-p)                                                   # F-Statistik WDF für H_0
+
+# KVF Perspektive
+plot(                                                                            # original density function
+eff,
+1 - Peff,
+type        = "l",
+xlab        = " ",
+ylab        = " ",
+ylim        = c(0,1),
+main        = "Complementary CDF of F(3,36)") 
+lines(
+F_value,
+0,
+type        = "p",
+pch         = 16,
+xpd         = TRUE)
+lines(
+min(eff),
+1 - p_value,
+type        = "p",
+pch         = 16,
+xpd         = TRUE)
+arrows(
+x0          = F_value,
+y0          = p_value,
+x1          = min(eff),
+y1          = p_value,
+col         = "gray",
+angle       = 35,
+length      = .1)
+arrows(
+x0          = F_value,
+y0          = 0,
+x1          = F_value,
+y1          = p_value,
+col         = "gray",
+angle       = 35,
+length      = .1)
+text(F_value, .1 , TeX("$F$-value"), xpd = TRUE)
+text(-.6      ,p_value , TeX("p-value"), xpd = TRUE)
+
+# WDF Perspektive
+plot(
+eff,
+peff,
+type        = "l",
+ylab        = " ",
+xlab        = " ",
+ylim        = c(0,.8),
+main        = "PDF of F(3,36)")
+polygon(
+c(eff[eff  >= F_value] , max(eff), F_value),
+c(peff[eff >= F_value],       0, 0),
+col = "gray90",
+border = NA)
+lines(
+F_value,
+0,
+type        = "p",
+pch         = 16,
+xpd         = TRUE)
+text(F_value,0.05, TeX("$F$-value") , xpd = TRUE)
+text( 1.2, .15, TeX("p-value"), xpd = TRUE)
+dev.off()
+```
+
+![Evaluation of the ANOVA $p$-value for the example data set 2 with observed $F$-value 0.5.](./_figures/anova-p-value.pdf){#fig-anova-p-value fig-align="center" width=90%}
+
+\newpage
+# ANOVA as a linear mixed model {#sec-anova-as-a-linear-mixed-model}
+
+Thus far, we have assumed that the observational units aside from being assigned
+to different treatment groups do not exhibit any predetermined inherent structure.
+In fact, in @tbl-anova-data-set-1 and @tbl-anova-data-set-2, we have separated the 
+inherent structure of observational units, i.e., fibroblasts from one cell culture
+strain vs. fibroblasts from another cell culture strain, into two independent 
+experiments and found evidence for treatment effects in one strain, but not the other. 
+If there exist inherent structure in the observational units that is in one way or another
+superimposed onto the structure of the experimental manipulation, it often pays to account for this 
+structure in the modelling of the experimental data set. Today, such structure 
+modelling is often achieved using *linear mixed models*, which in addition to 
+(fixed) experimental treatment effects and (random) unsystematic effects also account 
+for (random) observational unit effects that reflect some form of structure. In fact, 
+not accounting for structured variation of experimental data that is induced by the observational units, but treating all
+observational units as if they were independent, can have effects on the results
+of ANOVA analyses. The reason for this is that the analytical form of the
+$F$-distribution is built on the assumption of independent and identically distributed
+error variables for all observational units. If this assumption is violated because 
+certain error correlations exist, the actual distribution of $F$-values as computed 
+by the procedures discussed in @sec-anova-as-a-computational-procedure may differ 
+from the analytically available form as discussed in @sec-anova-as-a-linear-model. 
+While in the past, these instances were usually dealt with by adapting the analytical 
+form of the $F$-distribution appropriately, e.g., by evaluating modified degrees of 
+freedom parameters for it as in the *Huyhn-Feldt* or *Greenhouse-Geisser corrections*, 
+these methods have by and large been superseeded by linear mixed model approaches. 
+To motivate and explore these approaches, we consider two scenarios of inherent observational 
+unit structure that, if analysed using the conventional ANOVA approach assuming 
+independent  observational unit error variables, lead to an increase of false negative results (loss of 
+sensitivity) or an increase of false positive results. These scenarios are 
+referred to as *randomized block designs* and *nested subsampling designs*. 
+
+![Exemplary randomized block and nested subsampling designs. Both example designs
+comprise four experimental treatments. In the randomized block design, the observational 
+units within an experimental unit (block) are subjected to all treatments. 
+Differences between experimental units thus cancel out, if differences
+between the treatments are assessed. However, the spread of measurements in one 
+condition may be larger than in a one-way ANOVA design with one experimental unit 
+due to the varying experimental unit effects. In the nested subsampling design, observational
+units of different experimental units are used across the different treatments. If, 
+by chance, the observational units of experimental units E10 to E12 have high values due
+to the nature of the experimental units E10 to E12, this may be mistaken as an 
+effect of T4 if not accounted for.](./_figures/anova-randomized-block-nested-subsampling-designs.pdf){#fig-anova-randomized-block-nested-subsampling-designs fig-align="center" width=70%}
+
+**Randomized block designs** and the closely related
+*repeated-measures designs* are characterized by the fact that all experimental 
+conditions are measured within a given experimental unit. In the cell biological example, 
+if three different cell culture strains were used and each of the four experimental treatments 
+was applied within each strain, each to a set of fibroblasts from the particular strain, 
+this setup would be referred to as a randomized block design. Another common example are 
+cognitive psychology experiments, in which behavioral responses of human participants 
+are typically measured in response to all experimental treatments of interest. @fig-anova-randomized-block-nested-subsampling-designs\unskip A depicts the typical 
+design of an ANOVA randomized block design. Randomized block designs have the benefit, 
+that, at least in theory, data variation due to the experimental unit is equally 
+expressed across all experimental treatments, such that observed differences between 
+experimental treatments are not affected by the experimental units. They have the 
+disadvantage that the effect of the experimental units may increase the data spread
+about each treatment group mean.  
+
+A basic linear mixed model for a randomized block design takes the form
+$$
+y_{kij} = \mu_0 + \alpha_i + \mu_k + \varepsilon_{kij},
+$$ {#eq-anova-randomized-block}
+where for $k = 1,...,n_k$, $i = 1,...,p$ and $j = 1,...,n_{ki}$ 
+
+* $y_{kij}$ is the data of the $j$th observational unit in the $i$th treatment group in the $k$th experimental unit 
+* $\mu_0$ is the average reference group effect across experimental units, 
+* $\alpha_i$ is the average difference between treatment level $i$ and the average reference group effect with $\alpha_1 := 0$
+* $\mu_k \sim N(0,\sigma_k^2)$ is the random effect of the $k$th experimental unit, 
+* $\varepsilon_{kij} \sim N(0, \sigma_{\varepsilon}^2)$ is the error of the $j$th observational unit in the $i$th treatment in the $k$th experimental unit.
+
+Note that in contrast to @eq-anova-lm, @eq-anova-randomized-block includes explicit
+terms that reference the experimental unit, in particular the normally distributed
+random experimental unit effect $\mu_k \sim N(0,\sigma_k^2)$. Parameter estimation 
+for linear mixed models such as @eq-anova-randomized-block is complicated by the 
+fact that in contrast to @eq-anova-lm, linear mixed models include multiple
+latent random variables such as $\mu_k$ and $\varepsilon_{kij}$ and multiple parameters 
+such as $\sigma_k^2$ and $\sigma_\varepsilon^2$. 
+
+@fig-anova-randomized-block-design-data shows simulated data from a randomized 
+block design with $k = 3$ experimental units `E1`, `E2`, `E3`, $p = 4$ treatments 
+`T1`,`T2`,`T3` and `T4` and $n_{ki} = 10$ observational units per treatment group in each experimental unit. 
+The data is generated based on the null hypothesis parameter setting $\alpha_2 = \alpha_3 = 0$.
+Note that when averaging for example the data points of `T1` across all experimental units,
+and assessing the remaining differences between the data points of `T1` across
+all experimental units, this component of the within-sum-of-squares will be larger
+than compared to a scenario in which only data from one of the experimental units 
+is assessed. On the other hand, the observable differences across all treatment groups
+across experimental units cancel out, if differences between treatment means are
+evaluated in a per experimenal unit manner.
+
+```{r, echo = F, eval = F}
+library(MASS)                                                                   # multivariate normal distribution
+library(nlme)                                                                   # linear mixed models
+set.seed(0)                                                                     # reproducibility 
+s           = 3                                                                 # number of cell culture strains
+p           = 4                                                                 # number of groups per cell culture strain  
+m           = 10                                                                # number of observational units per group per cell culture strain
+k           = p*m                                                               # number of observation units per cell culture strain
+n           = s*p*m                                                             # number of observational units in total
+b           = s*p                                                               # number of groups in total 
+X_t         = cbind(                                                            # fixed  effects design matrix construction
+              matrix(1, nrow = k, ncol = 1),                                    # fixed  effects design matrix construction
+              kronecker(diag(p), matrix(1,nrow = m,ncol = 1)))                  # fixed  effects design matrix construction
+X_i         = X_t[,-2]                                                          # fixed  effects design matrix for one cell culture strain
+X           = kronecker(matrix(rep(1,s), nrow = s), X_i)                        # fixed  effects design matrix
+Z           = kronecker(diag(s), matrix(rep(1,k), nrow = k))                    # random effects design matrix
+beta        = matrix(c(5,0,0,0), nrow = p)                                      # fixed effects null hypothesis parameter
+mu_y        = X %*% beta                                                        # marginal expectation
+sig_eps     = 3                                                                 # error variance
+sig_b       = 3                                                                 # random effects variance
+Sigma_y     = sig_b*(Z %*% t(Z)) + sig_eps*diag(n)                              # marginal covariance
+y           = mvrnorm(1, mu_y, Sigma_y)                                         # data sampling
+T           = rep(rep(paste0("T", 1:p), each = m), s)                           # treatment factor
+E           = rep(paste0("E", 1:s), each = p*m)                                 # experimental unit factor           
+D           = data.frame(TRM = T, EU = E, y = y)                                # data formatting 
+write.csv(D, "./_data/anova-randomized-block-design-data-set.csv", row.names = FALSE) # 
+```
+
+```{r, eval = F}
+# visualization as "stripchart"
+library(latex2exp)
+pdf(                                                                            
+file        = "./_figures/anova-randomized-block-design-data.pdf",                                           
+width       = 10,                                                                     
+height      = 6) 
+par(                                                                    
+family      = "sans",                                                  
+mfcol       = c(1,1),                                                  
+pty         = "m",                                                     
+bty         = "l",                                                     
+lwd         = 1,                                                       
+las         = 2,                                                       
+mgp         = c(2,1,0),                                                
+xaxs        = "i",                                                   
+yaxs        = "i",                                                  
+font.main   = 1,                                                       
+cex         = 1.2,
+cex.main    = 1.4,
+xpd         = FALSE)
+xpos        = 1:b
+xjit        = rep(xpos, each = m) + runif(n, -0.15, 0.15)
+tcols       = c("T1"="gray20","T2"="gray40","T3"="gray60","T4"="gray80")
+ptcol       = adjustcolor(tcols[D$TRM], alpha.f = 0.9)
+plot(
+xjit, 
+D$y, 
+pch         = 19, 
+col         = ptcol,
+xaxt        = "n", 
+xlab        = " ",
+ylab        = "Observation", 
+main        = "Randomized block design data",
+xlim        = c(0.5,12.5),
+ylim        = c(0,8))
+axis(
+1, 
+at          = unique(xpos), 
+labels      = rep(paste0("T", 1:p),s) ,
+las         = 1)
+abline(
+v           = c(4.5, 8.5), 
+lty         = 3, 
+col         = "grey70")
+mtext(
+c("E1","E2","E3"), 
+side        = 1, 
+line        = 3,
+at          = c(2.5,6.5,10.5), 
+cex         = 1.4, 
+las         = 1)
+dev.off()
+```
+
+![Randomized block design data example.](./_figures/anova-randomized-block-design-data.pdf){#fig-anova-randomized-block-design-data fig-align="center" width=80%} 
+
+Formally, it can be shown that the presence of random terms such as $\mu_k$ induces 
+correlations in the marginal error and data covariance matrices. In the case of 
+randomized block designs, these correlations induce an increase of the within-sum-of-squares 
+such that, when not accounted for, on average lower $F$-values are observed than 
+predicted based on independent observational unit error terms. 
+@fig-anova-randomized-block-design-f-simulation\unskip B shows this shift of observed
+$F$-values under the null hypothesis when computed based on samples from 
+@eq-anova-randomized-block as opposed to computed based on samples from @eq-anova-lm as shown in @fig-anova-randomized-block-design-f-simulation\unskip A. 
+
+The popularity of linear mixed models in the analysis of modern ANOVA designs
+owes much to the availability of software packages that make data analysis with 
+mathematically fairly complex models very easy in research applications. 
+The most popular **R** packages for linear mixed model analysis are `nlme` (@pinheiro2000)
+and `lme4` (@bates2004). We here demonstrate a linear mixed model analysis using
+the `lme()` function of `nlme` which capitalizes on a *restricted maximum-likelihood*
+approach for covariance component estimation. In addition to 
+specifying which data should be modeled with respect to which experimental factor,
+linear mixed model implementation typically required additional information
+about the observational unit structure (grouping). For the data shown in 
+@fig-anova-randomized-block-design-data, this information is encoded in the 
+`EU` (experimental unit) column of the data set table. The following code snippet shows
+the analysis of this data set using the linear mixed model of @eq-anova-randomized-block.
+
+\tiny
+```{r, echo = T, message = F, warning = F}
+library(nlme)                                                                   # (non)linear mixed model package
+D       = read.csv("./_data/anova-randomized-block-design-data-set.csv")        # dataframe in long 
+anova(lme(y ~ TRM, data = D, random = ~ 1|EU))                                  # LMM treatment effect evaluation
+```
+\normalsize
+
+Using this approach in the Frequentist simulations of @fig-anova-randomized-block-design-f-simulation\unskip C
+shows that an analytical $F$-distribution is available that conforms to the observed
+$F$-value distribution of the linear mixed model. Using a linear mixed model that 
+properly accounts for the induced error correlations thus renders an ANOVA analysis 
+of data from randomized block design more sensitive. 
+
+```{r, echo = F, eval = F}
+library(MASS)                                                                   # multivariate normal distribution
+library(nlme)                                                                   # linear mixed models
+set.seed(2)                                                                     # reproducibility 
+s           = 3                                                                 # number of cell culture strains
+p           = 4                                                                 # number of groups per cell culture straing 
+m           = 10                                                                # number of observational units per group per cell culture strain
+k           = p*m                                                               # number of observation units per cell culture strain
+n           = s*p*m                                                             # number of observational units in total
+X_t         = cbind(                                                            # fixed  effects design matrix construction
+              matrix(1, nrow = k, ncol = 1),                                    # fixed  effects design matrix construction
+              kronecker(diag(p), matrix(1,nrow = m,ncol = 1)))                  # fixed  effects design matrix construction
+X_i         = X_t[,-2]                                                          # fixed  effects design matrix for one cell culture strain
+X           = kronecker(matrix(rep(1,s), nrow = s), X_i)                        # fixed  effects design matrix
+Z           = kronecker(diag(s), matrix(rep(1,k), nrow = k))                    # random effects design matrix
+beta        = matrix(c(5,0,0,0), nrow = p)                                      # fixed effects null hypothesis parameter
+sig_eps     = 3                                                                 # error variance
+sig_b       = 3                                                                 # random effects variance
+nsamp       = 10000                                                             # number of samples per model
+I_n         = diag(n)                                                           # error covariance matrix structure      
+F_lm        = rep(NaN, nsamp)                                                   # F-values for the linear model
+F_lmm       = rep(NaN, nsamp)                                                   # F-values for linear mixed model
+F_lme       = rep(NaN, nsamp)                                                   # F-values for the linear mixed model estimated using lme    
+
+# linear model simulations
+mu_y        = X %*% beta                                                        # marginal expectation
+Sigma_y     = sig_eps*I_n                                                       # marginal covariance
+for(i in 1:nsamp){                                                              # sampling iterations
+  y         = mvrnorm(1, mu_y, Sigma_y)                                         # data sampling 
+  T         = rep(rep(paste0("T", 1:p), each = m), s)                           # treatment factor
+  E         = rep(paste0("E", 1:s), each = p*m)                                 # experimental unit factor           
+  D         = data.frame(TRM = T, EU = E, y = y)                                # data formatting 
+  R         = lm(y ~ TRM, data = D)                                             # ANOVA
+  F_lm[i]   = summary(R)$fstatistic[1]                                          # F-value
+}
+
+# linear mixed model simulations of a balanced randomized block design
+mu_y        = X %*% beta                                                        # marginal expectation
+Sigma_y     = sig_b*(Z %*% t(Z)) + sig_eps*I_n                                  # marginal covariance
+for(i in 1:nsamp){                                                              # sampling iterations
+  y         = mvrnorm(1, mu_y, Sigma_y)                                         # data sampling
+  T         = rep(rep(paste0("T", 1:p), each = m), s)                           # treatment factor
+  E         = rep(paste0("E", 1:s), each = p*m)                                 # experimental unit factor           
+  D         = data.frame(TRM = T, EU = E, y = y)                                # data formatting 
+  R         = lm(y ~ TRM, data = D)                                             # ANOVA
+  F_lmm[i]  = summary(R)$fstatistic[1]                                          # F-value, inppropriate linear model 
+  F_lme[i]  = anova(lme(y ~ TRM, data = D, random = ~ 1|EU))["TRM", "F-value"]  # F-value, appropriate linear mixed model
+}
+```
+
+```{r, eval = F}
+library(latex2exp)
+pdf(                                                                             
+file        = "./_figures/anova-randomized-block-design-f-simulation.pdf",                
+width       = 15,                                                                     
+height      = 5)                                                                                                                                         
+par(                                                                    
+family      = "sans",                                                  
+mfcol       = c(1,3),                                                  
+pty         = "m",                                                     
+bty         = "l",                                                     
+lwd         = 1,                                                       
+las         = 1,                                                       
+mgp         = c(2,1,0),                                                
+xaxs        = "i",                                                   
+yaxs        = "i",                                                  
+font.main   = 1,                                                       
+cex         = 1.2,
+cex.main    = 1)
+
+# analytical f distribution
+f_min       = 0                                                                  
+f_max       = 4                                                                  
+f_res       = 1e3                                                                
+f           = seq(f_min,f_max, len = f_res)                                     
+p_F         = df(f,p-1,n-p)                                                          
+
+# linear model generated histogram and density
+hist(
+F_lm,                                                                       
+breaks      = 100,                                                                
+col         = "gray90",                                                           
+prob        = TRUE,                                                               
+xlim        = c(f_min, f_max),                                                    
+ylim        = c(0,0.8),                                                            
+xlab        = "F-value",                                                                
+ylab        = "",                                                                 
+main        = "Independent observational units \n Linear model analysis")
+lines(
+f,                                                                          
+p_F,                                                                       
+lwd         = 2,                                                                  
+col         = "darkorange")      
+
+# linear mixed model generated histogram and density
+hist(
+F_lmm,                                                                       
+breaks      = 100,                                                                
+col         = "gray90",                                                           
+prob        = TRUE,                                                               
+xlim        = c(f_min, f_max),                                                    
+ylim        = c(0,1.2),                                                            
+xlab        = "F-value",                                                                
+ylab        = "",                                                                 
+main        = "Randomized block design \n Linear model analysis")
+lines(
+f,                                                                          
+p_F,                                                                       
+lwd   = 2,                                                                  
+col   = "darkorange")   
+
+# linear mixed model generated histogram and density
+f_min       = 0                                                                  
+f_max       = 4                                                                  
+f_res       = 1e3                                                                
+f           = seq(f_min,f_max, len = f_res)                                     
+p_F         = df(f,p-1,n-p-(s-1))  
+hist(
+F_lme,                                                                       
+breaks      = 100,                                                                
+col         = "gray90",                                                           
+prob        = TRUE,                                                               
+xlim        = c(f_min, f_max),                                                    
+ylim        = c(0,0.8),                                                            
+xlab        = "F-value",                                                                
+ylab        = "",                                                                 
+main        = "Randomized block design \n Linear mixed model analysis")
+lines(
+f,                                                                          
+p_F,                                                                       
+lwd   = 2,                                                                  
+col   = "darkorange")  
+dev.off()                                                       
+```
+
+![Loss of sensitivity in a randomized block design when analyzed with a linear model ANOVA,
+but not a linear mixed model ANOVA.](./_figures/anova-randomized-block-design-f-simulation.pdf){#fig-anova-randomized-block-design-f-simulation fig-align="center" width=100%}  
+
+
+**Nested subsampling designs** are experimental designs sometimes encountered in biological 
+studies (cf. @yu2022). Here, the basic idea is that each experimental unit provides
+a set of observational units and treatments are applied to sets of experimental units.
+For example, suppose four different cytokine treatments are tested. For each treatment, 
+fibroblasts are harvested from three different animals, and collagen production is then 
+measured in these fibroblasts. Because the fibroblasts are not independent samples 
+but instead are nested within animals (which are themselves grouped by treatment), 
+this setup is considered a nested subsampling design. Intuitively, nested subsampling
+designs have the disadvantage that they can easily conflate experimental unit and
+treatment effects. In @fig-anova-randomized-block-nested-subsampling-designs\unskip B, assume that by
+chance the fibroblasts of experimental units E10 to E12 produce high levels of
+Collagen, irrespective of any treatment. If observed under the nested subsampling
+design, this random experimental unit effect can readily be mistaken as an effect
+of the fourth treatment level. Nested subsampling designs are thus prone to 
+produce false positive effects, if their inherent observational unit structure is
+not accounted for.
+
+A basic linear mixed model for a nested subsampling design takes the following form.
+
+$$
+y_{ikj} = \mu_0 + \alpha_i + \mu_{ik} + \varepsilon_{ikj},
+$$ {#eq-anova-nested-subsampling}
+where for $k = 1,...,n_k$, $i = 1,...,p$ and $j = 1,...,n_{ik}$ 
+
+* $y_{ikj}$ is the data of the $j$th observational unit of the $k$th experimental unit in the $i$th treatment group,
+* $\mu_0$ is the average reference group effect across experimental units, 
+* $\alpha_i$ is the average difference between treatment level $i$ and the average reference group effect with $\alpha_1 := 0$
+* $\mu_{ik} \sim N(0,\sigma_k^2)$ is the random effect of the $k$th experimental unit in the $i$th treatment group, 
+* $\varepsilon_{ikj} \sim N(0, \sigma_{\varepsilon}^2)$ is the error of the $j$th observational unit in the $k$th experimental unit in the $i$th treatment.
+
+Note that in contrast to @eq-anova-randomized-block, the random effects $\mu_{ik}$
+are experimental unit *and* treatment-specific. 
+
+
+@fig-anova-nested-subsampling-design-data shows simulated data from a nested subsamplig
+design with $n_k = 12$ experimental units `E1` to `E12`, $p = 4$ experimental treatments
+and $n_{ik} = 10$ observational units per experimental unit. Note that the elevated 
+observations in `T4` may well be induced by the experimental unit effects of `E10` ,`E11`,
+and `E12`. In general it is easily possible, that experimental unit effects inflate
+the mean between-sum-of-squares in a linear model ANOVA of nested subsampling design data.
+In analogy to the the analysis of the randomized block design data, the following 
+code snippet shows the analysis of this data set using the linear mixed model 
+of @eq-anova-nested-subsampling.
+
+\tiny
+```{r, echo = T, message = F, warning = F}
+library(nlme)                                                                   # (non)linear mixed model package
+D       = read.csv("./_data/anova-nested-subsampling-design-data-set.csv")      # dataframe in long format
+anova(lme(y ~ TRM, data = D, random = ~ 1|EU))                                  # LMM treatment effect evaluation
+```
+\normalsize
+
+```{r, echo = F, eval = F}
+# simulation of a single data set
+library(MASS)                                                                   # multivariate normal distribution
+set.seed(2)                                                                     # reproducibility 
+p           = 4                                                                 # number of experimental groups 
+m           = 30                                                                # number of observational units per group  
+a           = 3                                                                 # number of animals per group 
+b           = p*a                                                               # number of animals in total
+k           = m/a                                                               # number of observation units per animal
+n           = p*m                                                               # number of observational units in total
+X_t         = cbind(                                                            # fixed  effects design matrix construction
+              matrix(1, nrow = n, ncol = 1),                                    # fixed  effects design matrix construction
+              kronecker(diag(p), matrix(1 ,nrow = m, ncol = 1)))                # fixed  effects design matrix construction
+X           = X_t[,-2]                                                          # fixed  effects design matrix for one cell culture strain 
+Z           = kronecker(diag(b), matrix(rep(1,k), nrow = k))                    # random effects design matrix
+beta        = matrix(c(5,0,0,2), nrow = p)                                      # fixed effects null hypothesis parameter
+sig_eps     = .5                                                                # error variance
+sig_b       = 1                                                                 # random effects variance
+mu_y        = X %*% beta                                                        # marginal expectation parameter
+Sigma_y     = sig_b*(Z %*% t(Z)) + sig_eps*diag(n)                              # marginal covariance parameter
+y           = mvrnorm(1, mu_y, Sigma_y)                                         # data sampling
+T           = rep(paste0("T", 1:4), each = m)                                   # treatment factor
+E           = rep(paste0("E", 1:b), each = k)                                   # experimental unit factor
+D           = data.frame(TRM = T, EU = E, y = y)                                # data formatting
+write.csv(D, "./_data/anova-nested-subsampling-design-data-set.csv", row.names = FALSE)   
+```
+
+```{r, eval = F}
+# visualization as "stripchart"
+library(latex2exp)
+pdf(                                                                            
+file        = "./_figures/anova-nested-subsampling-design-data.pdf",                                           
+width       = 10,                                                                     
+height      = 6) 
+par(                                                                    
+family      = "sans",                                                  
+mfcol       = c(1,1),                                                  
+pty         = "m",                                                     
+bty         = "l",                                                     
+lwd         = 1,                                                       
+las         = 2,                                                       
+mgp         = c(2,1,0),                                                
+xaxs        = "i",                                                   
+yaxs        = "i",                                                  
+font.main   = 1,                                                       
+cex         = 1.2,
+cex.main    = 1.4,
+xpd         = FALSE)
+xpos        = 1:b
+xjit        = rep(xpos, each = k) + runif(n, -0.15, 0.15)
+tcols       = c("T1"="gray20","T2"="gray40","T3"="gray60","T4"="gray80")
+ptcol       = adjustcolor(tcols[D$TRM], alpha.f = 0.9)
+plot(
+xjit, 
+D$y, 
+pch         = 19, 
+col         = ptcol,
+xlim        = c(.5,12.5),
+ylim        =  c(1,10),
+xaxt        = "n", 
+xlab        = " ",
+ylab        = "Observation", 
+main        = "Nested subsampling design data")
+axis(
+1, 
+at          = unique(xpos), 
+labels      = rep(paste0("E", 1:b)),
+las         = 1)
+abline(
+v           = c(3.5, 6.5, 9.5), 
+lty         = 3, 
+col         = "grey70")
+mtext(
+c("T1","T2","T3","T4"), 
+side        = 1, 
+line        = 3,
+at          = c(2,5,8,11), 
+cex         = 1.4, 
+las         = 1)
+dev.off()
+```
+
+
+![Nested subsampling design data example.](./_figures/anova-nested-subsampling-design-data.pdf){#fig-anova-nested-subsampling-design-data fig-align="center" width=70%} 
+
+As for the randomized block design, it can be shown that the presence of random terms such as the $\mu_{ik}$s induces 
+correlations in the marginal error and  data covariance matrices. In the case of 
+nested subsampling designs, these correlations induce an increase of the between
+sum of squares such that, when not accounted for, on average higher $F$-values 
+are observed than predicted based on independent observational unit error terms. 
+@fig-anova-nested-subsampling-design-f-simulation\unskip B shows this shift of observed $F$-values 
+under the null hypothesis when computed based on samples from @eq-anova-nested-subsampling 
+as opposed to computed based on samples from @eq-anova-lm as shown in 
+@fig-anova-nested-subsampling-design-f-simulation\unskip A. Again, as shown 
+in @fig-anova-nested-subsampling-design-f-simulation\unskip C, using a linear mixed 
+model that properly accounts for the induced error correlations renders the analysis 
+less prone to false positive results. 
+
+```{r, echo = F, eval = F}
+library(nlme)                                                                   # linear mixed models
+library(MASS)                                                                   # multivariate normal distribution
+set.seed(2)                                                                     # reproducibility 
+p           = 4                                                                 # number of experimental groups 
+m           = 30                                                                # number of observational units per group  
+a           = 3                                                                 # number of animals per group 
+b           = p*a                                                               # number of animals in total
+k           = m/a                                                               # number of observation units per animal
+n           = p*m                                                               # number of observational units in total
+X_t         = cbind(                                                            # fixed  effects design matrix construction
+              matrix(1, nrow = n, ncol = 1),                                    # fixed  effects design matrix construction
+              kronecker(diag(p), matrix(1 ,nrow = m, ncol = 1)))                # fixed  effects design matrix construction
+X           = X_t[,-2]                                                          # fixed  effects design matrix for one cell culture strain 
+Z           = kronecker(diag(b), matrix(rep(1,k), nrow = k))                    # random effects design matrix
+beta        = matrix(c(5,0,0,0), nrow = p)                                      # fixed effects null hypothesis parameter
+sig_eps     = 1                                                                 # error variance
+sig_b       = 1                                                                 # random effects variance
+nsamp       = 10000                                                             # number of samples per model
+I_n         = diag(n)                                                           # error covariance matrix structure      
+F_lm        = rep(NaN, nsamp)                                                   # F-values for linear model
+F_lmm       = rep(NaN, nsamp)                                                   # F-values for linear mixed model
+F_lme       = rep(NaN, nsamp)                                                   # F-values for linear mixed model estimated using LME
+
+# linear model simulations
+mu_y        = X %*% beta                                                        # marginal expectation parameter
+Sigma_y     = sig_eps*I_n                                                       # marginal covariance parameter
+for(i in 1:nsamp){                                                              # sample iterations
+  y         = mvrnorm(1, mu_y, Sigma_y)                                         # data sampling
+  T         = rep(paste0("T", 1:4), each = m)                                   # treatment factor
+  E         = rep(paste0("E", 1:b), each = k)                                   # experimental unit factor
+  D         = data.frame(TRM = T, EU = E, y = y)                                # data formatting
+  R         = lm(y ~ TRM, data = D)                                             # ANOVA 
+  F_lm[i]   = summary(R)$fstatistic[1]                                          # F-value
+}
+
+# linear mixed model simulations of a nested subsampling design
+mu_y        = X %*% beta                                                        # marginal expectation parameter
+Sigma_y     = sig_b*(Z %*% t(Z)) + sig_eps*I_n                                  # marginal covariance parameter
+for(i in 1:nsamp){                                                              # sample iterations
+  y         = mvrnorm(1, mu_y, Sigma_y)                                         # data sampling
+  T         = rep(paste0("T", 1:4), each = m)                                   # treatment factor
+  E         = rep(paste0("E", 1:b), each = k)                                   # experimental unit factor
+  D         = data.frame(TRM = T, EU = E, y = y)                                # data formatting
+  R         = lm(y ~ TRM, data = D)                                             # ANOVA     
+  F_lmm[i]  = summary(R)$fstatistic[1]                                          # F-value appropriate linear model analysis
+  F_lme[i]  = anova(lme(y ~ TRM, data = D, random = ~ 1|EU))["TRM", "F-value"]  # F-value appropriate linear mixed model analysis
+}
+```
+
+```{r eval = F}
+library(latex2exp)
+pdf(                                                                            
+file        = "./_figures/anova-nested-subsampling-design-f-simulation.pdf",                                           
+width       = 15,                                                                     
+height      =  5)                                                                                                                                         
+par(                                                                    
+family      = "sans",                                                  
+mfcol       = c(1,3),                                                  
+pty         = "m",                                                     
+bty         = "l",                                                     
+lwd         = 1,                                                       
+las         = 1,                                                       
+mgp         = c(2,1,0),                                                
+xaxs        = "i",                                                   
+yaxs        = "i",                                                  
+font.main   = 1,                                                       
+cex         = 1.2,
+cex.main    = 1)
+
+# linear model with linear model analysis
+f_min       = 0                                                                  
+f_max       = 6                                                                 
+f_res       = 1e3                                                                
+f           = seq(f_min,f_max, len=f_res)                                     
+p_F         = df(f,p-1,n-p)                                                          
+hist(
+F_lm,                                                                       
+breaks      = 100,                                                                
+col         = "gray90",                                                           
+prob        = TRUE,                                                               
+xlim        = c(f_min, f_max),                                                    
+ylim        = c(0,.8),                                                            
+xlab        = "F-value",                                                                
+ylab        = "",                                                                 
+main        = "Independent observational units \n Linear model analysis")
+lines(
+f,                                                                          
+p_F,                                                                       
+lwd         = 2,                                                                  
+col         = "darkorange")      
+
+# linear mixed model with linear model analysis
+f_min       = 0                                                                  
+f_max       = 6                                                               
+f_res       = 1e3                                                                
+f           = seq(f_min,f_max, len=f_res)                                     
+p_F         = df(f,p-1,n-p) 
+hist(
+F_lmm,                                                                       
+breaks      = 100,                                                                
+col         = "gray90",                                                           
+prob        = TRUE,                                                               
+xlim        = c(f_min, f_max),                                                    
+ylim        = c(0,1.2),                                                            
+xlab        = "F-value",                                                                
+ylab        = "",                                                                 
+main        = "Nested subsampling design \n Linear model analysis")
+lines(
+f,                                                                          
+p_F,                                                                       
+lwd   = 2,                                                                  
+col   = "darkorange")      
+
+# linear mixed model with linear model analysis
+numDF       = anova(lme(y ~ TRM, data = D, random = ~ 1|EU))["TRM","numDF"]     # DF approximation
+denDF       = anova(lme(y ~ TRM, data = D, random = ~ 1|EU))["TRM","denDF"]     # DF approximation
+f_min       = 0                                                                  
+f_max       = 6                                                                
+f_res       = 1e3                                                                
+f           = seq(f_min,f_max, len=f_res)                                     
+p_F         = df(f,numDF,denDF) 
+hist(
+F_lme,                                                                       
+breaks      = 100,                                                                
+col         = "gray90",                                                           
+prob        = TRUE,                                                               
+xlim        = c(f_min, f_max),                                                    
+ylim        = c(0,.8),                                                            
+xlab        = "F-value",                                                                
+ylab        = "",                                                                 
+main        = "Nested subsampling design \n Linear mixed model analysis")
+lines(
+f,                                                                          
+p_F,                                                                       
+lwd   = 2,                                                                  
+col   = "darkorange")      
+dev.off()                                                       
+```
+
+![Increase of false positives in a nested subsampling design when analyzed using
+a linear model ANOVA, but not a linear mixed model ANOVA.](./_figures/anova-nested-subsampling-design-f-simulation.pdf){#fig-anova-nested-subsampling-design-f-simulation fig-align="center" width=100%}
+
+# Bibliographic remarks {#sec-bibliographic-remarks}
+
+@fisher1925a and @scheffe1959 provide classical treatments of ANOVA as a 
+computational procedure.  @winer1971 and @maxwell2018 provide excellent, largely 
+matrix calculus-free introductions to ANOVA as a linear model. @hays1994 is a good
+text for newcomers to statistics. @snijders2012 provide a general non-technical 
+introduction to linear mixed models and @yu2022 provides an introduction to linear mixed models
+in the context of cell and animal research.
+
+# Supplementary Material {#sec-supplementary-material}
+
+\footnotesize
+
+## The sum symbol {#sec-the-sum-symbol}
+
+The sum symbol is defined as
+\begin{equation}
+\sum_{i=1}^{n} x_i = x_1 + x_{2} + \cdots + x_{n}.
+\end{equation}
+Here:
+
+* $\Sigma$ denotes the Greek letter Sigma, mnemonic for Sum,
+* the subscript $i = 1$ specifies the running index and the starting index,
+* the superscript $n$ specifies the ending index, and
+* $x_1, x_2, \dots, x_n$ are the summands.
+
+For meaningful use of the summation symbol, it is essential to specify the lower 
+and upper limits of summation via the subscript and superscript.The particular 
+choice of symbol for the running index is irrelevant to the value of the sum; indeed,
+\begin{equation}
+\sum_{i=1}^n x_i = \sum_{j=1}^n x_j.
+\end{equation}
+Sometimes the running index is given as an element of an index set.
+For example, if the index set $I := {1,5,7}$ is defined, then
+\begin{equation}
+\sum_{i \in I}x_i := x_1 + x_5 + x_7.
+\end{equation}
+In the following, we present several examples illustrating the use of the summation symbol.
+
+*Summation of predefined summands.* Let $x_1 := 2$, $x_2 := 10$, and $x_3 := -4$. Then
+\begin{equation}
+\sum_{i=1}^3 x_i = x_1 + x_2 + x_3 = 2 + 10 - 4 = 8.
+\end{equation}
+*Summation of weighted predefined summands.* Let $x_1 := 2$, $x_2 := 10$, and $x_3 := -4$.
+Furthermore, let the weighting coefficients be
+$a_1 := \frac{1}{2}$, $a_2 := \frac{1}{5}$, and $a_3 := 2$.
+Then
+\begin{equation}
+\sum_{i=1}^3 a_i x_i = a_1x_1 + a_2x_2 + a_3x_3 = \frac{1}{2}\cdot 2 + \frac{1}{5}\cdot 10 + 2\cdot (-4) = 1 + 2 - 8 = -5.
+\end{equation}
+Expressions of the form $\sum_{i=1}^n a_i x_i$ are referred to as *linear combinations* 
+of $x_1,\dots,x_n$ with coefficients or weights $a_1,\dots,a_n$.
+
+*Summation of natural numbers*.
+\begin{equation}
+\sum_{i=1}^5 i = 1 + 2 + 3 + 4 + 5 = 15.
+\end{equation}
+
+*Summation of even natural numbers.*
+\begin{equation}
+\sum_{i=1}^5 2i = 2\cdot 1 + 2\cdot 2 + 2\cdot 3 + 2\cdot 4 + 2\cdot 5 = 2 + 4 + 6 + 8 + 10 = 30.
+\end{equation}
+
+*Summation of odd natural numbers.*
+\begin{equation}
+\sum_{i=1}^5 (2i - 1) = 2\cdot 1 - 1 + 2\cdot 2 - 1 + 2\cdot 3 - 1 + 2\cdot 4 - 1 + 2\cdot 5 - 1 = 1 + 3 + 5 + 7 + 9 = 25.
+\end{equation}
+
+*Nested sums* The computational procedure for evaluating nested sums, i.e. expressions involving
+multiple sequential sum signs is best understood by expanding it from the inside 
+outward, noting that during each iteration of the inner sum, the index of the 
+outer sum remains fixed, The following example illustrates this:
+\begin{align}
+\begin{split}
+\sum_{i=1}^2 \sum_{j = 1}^3 (x_i + y_j) 
+& = \sum_{i=1}^2 (x_i + y_1 + x_i + y_2 + x_i + y_3) \\
+& = (x_1 + y_1 + x_1 + y_2 + x_1 + y_3) + (x_2 + y_1 + x_2 + y_2 + x_2 + y_3). 
+\end{split}
+\end{align}
+
+## Total sum-of-squares partition {#sec-total-sum-of-squares-partition}
+
+By definition of the $\mbox{SQT}$, $\mbox{SQB}$ and $\mbox{SQW}$, we have
+\begin{align}
+\begin{split}
+\mbox{SQT} 
+& = \sum_{i=1}^{p} \sum_{j=1}^{n_{i}}\left(y_{ij}-\bar{y}\right)^{2} \\
+& = \sum_{i=1}^{p} \sum_{j=1}^{n_{i}}\left(y_{ij}-\bar{y}_{i}+\bar{y}_{i}-\bar{y}\right)^{2} \\
+& = \sum_{i=1}^{p} \sum_{j=1}^{n_{i}}\left(\left(y_{ij}-\bar{y}_{i}\right)+\left(\bar{y}_{i}-\bar{y}\right)\right)^{2} \\
+& = \sum_{i=1}^{p} \sum_{j=1}^{n_{i}}\left(\left(y_{ij}-\bar{y}_{i}\right)^{2}+2\left(y_{ij}-\bar{y}_{i}\right)\left(\bar{y}_{i}-\bar{y}\right)+\left(\bar{y}_{i}-\bar{y}\right)^{2}\right) \\
+& =\sum_{i=1}^{p}\left(\sum_{j=1}^{n_{i}}\left(y_{ij}-\bar{y}_{i}\right)^{2}+\sum_{j=1}^{n_{i}} 2\left(y_{ij}-\bar{y}_{i}\right)\left(\bar{y}_{i}-\bar{y}\right)+\sum_{j=1}^{n_{i}}\left(\bar{y}_{i}-\bar{y}\right)^{2}\right)
+\\
+& =\sum_{i=1}^{p}\left(\sum_{j=1}^{n_{i}}\left(y_{ij}-\bar{y}_{i}\right)^{2}+2\left(\bar{y}_{i}-\bar{y}\right) \sum_{j=1}^{n_{i}}\left(y_{ij}-\bar{y}_{i}\right)+n_{i}\left(\bar{y}_{i}-\bar{y}\right)^{2}\right) \\
+& =\sum_{i=1}^{p}\left(\sum_{j=1}^{n_{i}}\left(y_{ij}-\bar{y}_{i}\right)^{2}+2\left(\bar{y}_{i}-\bar{y}\right) \sum_{j=1}^{n_{i}}\left(y_{ij}-\frac{1}{n_{i}} \sum_{j=1}^{n_{i}} y_{ij}\right)+n_{i}\left(\bar{y}_{i}-\bar{y}\right)^{2}\right) \\
+& =\sum_{i=1}^{p}\left(\sum_{j=1}^{n_{i}}\left(y_{ij}-\bar{y}_{i}\right)^{2}+2\left(\bar{y}_{i}-\bar{y}\right)\left(\sum_{j=1}^{n_{i}} y_{ij}-\sum_{j=1}^{n_{i}}\left(\frac{1}{n_{i}} \sum_{j=1}^{n_{i}} y_{ij}\right)\right)+n_{i}\left(\bar{y}_{i}-\bar{y}\right)^{2}\right) \\
+& =\sum_{i=1}^{p}\left(\sum_{j=1}^{n_{i}}\left(y_{ij}-\bar{y}_{i}\right)^{2}+2\left(\bar{y}_{i}-\bar{y}\right)\left(\sum_{j=1}^{n_{i}} y_{ij}-\frac{n_{i}}{n_{i}} \sum_{j=1}^{n_{i}} y_{ij}\right)+n_{i}\left(\bar{y}_{i}-\bar{y}\right)^{2}\right)
+\\ 
+& =\sum_{i=1}^{p}\left(\sum_{j=1}^{n_{i}}\left(y_{ij}-\bar{y}_{i}\right)^{2}+2\left(\bar{y}_{i}-\bar{y}\right)\left(\sum_{j=1}^{n_{i}} y_{ij}-\sum_{j=1}^{n_{i}} y_{ij}\right)+n_{i}\left(\bar{y}_{i}-\bar{y}\right)^{2}\right) \\
+& =\sum_{i=1}^{p}\left(\sum_{j=1}^{n_{i}}\left(y_{ij}-\bar{y}_{i}\right)^{2}+n_{i}\left(\bar{y}_{i}-\bar{y}\right)^{2}\right) \\
+& =\sum_{i=1}^{p} \sum_{j=1}^{n_{i}}\left(y_{ij}-\bar{y}_{i}\right)^{2}+\sum_{i=1}^{p} n_{i}\left(\bar{y}_{i}-\bar{y}\right)^{2} \\
+& =\mbox{SQW}+\mbox{SQB}
+\end{split}
+\end{align} 
+
+## The normal distribution {#sec-the-normal-distribution}
+
+The normal (or Gaussian) distribution is one of the most commonly encountered
+mathematical models for random phenomena, such as measurement errors in scientific 
+experiments. A key reason for its importance is the *Central Limit Theorem*, 
+which states that the sum of many independent random variables - regardless of 
+their individual distributions - tends to converge to a normal distribution. Thus, 
+the idea that, beyond the explanations offered by a deterministic scientific theory,
+numerous unknown factors influence any given observation provides strong motivation 
+for modelling error variables with the normal distribution. Formally, the normal
+distribution is described by the probability density function.
+$$
+p : \mathbb{R} \to \mathbb{R}_{>0}, x \mapsto p(x) := \frac{1}{\sqrt{2\pi\sigma^2}}\exp\left(-\frac{1}{2\sigma^2}(x-\mu)^2\right)
+$$ {#eq-normal-disribution}
+The expectation parameter $\mu$ determines the location of the function on the
+$x$ axis, the variance parameter $\sigma^2$ the width of the curve. In general, 
+a probability density function defined on the real numbers represents 
+probabilities through densities. To determine the probability that a normally 
+distributed random variable falls within a given interval, one integrates its 
+probability density function over that interval in the Riemannian sense. Since 
+interval length is measured uniformly along the real line, regions of high probability 
+density - such as those near the expectation  parameter $\mu$ - correspond to 
+higher probabilities of the random variable taking values there. The situation is analogous
+to the concept of densities in physics: only multiplying a non-zero volume (interval) 
+by the density (probability) of some material yields a non-zero mass (probybility mass). 
+Repeated sampling with replaced of a random variable (or simultaneous sampling of 
+many identical copies of a single random variable) produces data that, when analyzed 
+statistically, reflect the characteristic distribution of the underlying mathematical model.
+
+```{r, eval = F, echo = F}
+library(latex2exp)
+set.seed(1)
+pdf(                                                                            
+file        = "./_figures/anova-normal-distribution.pdf",                                           
+width       = 11,                                                                     
+height      = 4) 
+par(
+family      = "sans",
+mfcol       = c(1,3),
+pty         = "s",
+bty         = "l",
+lwd         = 1,
+las         = 1,
+mgp         = c(2,1,0),
+xaxs        = "i",
+yaxs        = "i",
+font.main   = 1,
+cex         = 1,
+cex.main    = 1)
+x_min       = -4                                            
+x_max       = 4                                            
+x_res       = 1e3                                          
+x           = seq(x_min, x_max, length.out = x_res)        
+mu          = 0                                            
+sigsqr      = 1                                         
+
+# Wahrscheinlichkeitstheorie
+plot(
+x,
+dnorm(x,mu,sqrt(sigsqr)),
+type        = "l",
+col         = "black",
+lwd         = 1,
+main        = "Probability density function",
+xlab        = "x",
+ylab        = "",
+ylim        = c(0,.4))
+
+# Daten
+n           = 100
+D           = rnorm(n,mu,sqrt(sigsqr))
+plot(
+D,
+rep(0,n),
+type        = "p",
+lwd         = 1,
+main        = "Realizations",
+xlab        = "x",
+ylab        = "",
+xlim        = c(-4,4),
+ylim        = c(-2,2),
+pch         = 21,
+col         = "white",
+bg          = "gray60",
+cex         = 1)
+
+# Deskriptive Statistik
+hist(
+D,
+main        = "Descriptive statistics",
+xlim        = c(-4,4),
+ylab        = "Counts",
+xlab        = "x",
+ylim        = c(0,25))
+dev.off()
+```
+
+![The normal distribution from a probability theory-, data-, and descriptive statistics- 
+perspective.](./_figures/anova-normal-distribution.pdf){#fig-anova-normal-distribution fig-align="center" width=100%}
+
+
+# References {.unnumbered}
+\small
+
