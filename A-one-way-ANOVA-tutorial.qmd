@@ -345,7 +345,7 @@ $$
 F = \frac{\mbox{MSB}}{\mbox{MSW}}.
 $$ {#eq-F-value}
 $F$-values larger than $1$ thus indicate that the $\mbox{MSB}$ is larger than the 
-$\mbox{MSB}$. In this sense, $F$-values larger than $1$ thus indicate that the 
+$\mbox{MSW}$. In this sense, $F$-values larger than $1$ thus indicate that the 
 averaged treatment-induced group mean variability is larger than the data point 
 variability at a constant treatment level. The following **R** code evaluates the 
 necessary quantities for computing the $F$-value for the example data sets 
